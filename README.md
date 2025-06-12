@@ -1,5 +1,5 @@
-# sys-botbase
-A Nintendo Switch (CFW) sys-module that allows users to remote control their switch via sockets as well as read and write to a games memory. This can be used to create bots for games and other fun automation projects.
+# Scriptease
+A usable (yet inchoate) TAS/Automation toolkit for the Nintendo Switch with homebrew, compatible with latest firmware. The sys-module is based on sys-botbase, but it extends sys-botbase's functionality for TAS purposes.
 
 ## Features:
 ### Remote Control:
@@ -20,11 +20,12 @@ A Nintendo Switch (CFW) sys-module that allows users to remote control their swi
 This project was created for the purpose of development for bot automation. The creators and maintainers of this project are not liable for any damages caused or bans received. Use at your own risk.
 
 ## Installation
-Download [latest release](https://github.com/olliz0r/sys-botbase/releases/latest) and extract into your Nintendo Switch SD card. Restart your switch. 
+TODO
+<!-- Download [latest release](https://github.com/olliz0r/sys-botbase/releases/latest) and extract into your Nintendo Switch SD card. Restart your switch. 
 
 When installed correctly, sys-botbase will make your docked joy-con's home button glow on switch bootup. If this does not happen, sys-botbase is not installed correctly.
 
-![](joycon-glow.gif)
+![](joycon-glow.gif) -->
 
 ## Credits
 - Big thank you to [jakibaki](https://github.com/jakibaki/sys-netcheat) for a great sysmodule base to learn and work with, as well as being helpful on the Reswitched discord!

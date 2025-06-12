@@ -28,6 +28,10 @@ bool initflag=0;
 u8 *workmem = NULL;
 size_t workmem_size = 0x1000;
 
+u32 frameAdvanceWaitTimeNs = 1e7;
+ViDisplay disp;
+Event vsyncEvent;
+
 void attach()
 {
     u64 pid = 0;
@@ -35,8 +39,7 @@ void attach()
     if (R_FAILED(rc) && debugResultCodes)
         printf("pmdmntGetApplicationProcessId: %d\n", rc);
 
-    if (debughandle != 0)
-        svcCloseHandle(debughandle);
+    detach();
 
     rc = svcDebugActiveProcess(&debughandle, pid);
     if (R_FAILED(rc) && debugResultCodes)
@@ -45,7 +48,44 @@ void attach()
 
 void detach(){
     if (debughandle != 0)
+    {
         svcCloseHandle(debughandle);
+    }
+}
+
+void advance_one_frame()
+{
+    s32 cur_priority;
+    svcGetThreadPriority(&cur_priority, CUR_THREAD_HANDLE);
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 10);
+    
+    u64 pid = 0;
+    Result rc = pmdmntGetApplicationProcessId(&pid);
+    if (R_FAILED(rc) && debugResultCodes)
+        printf("pmdmntGetApplicationProcessId: %d\n", rc);
+
+    rc = viOpenDefaultDisplay(&disp);
+    if(R_FAILED(rc))
+        fatalThrow(rc);
+    rc = viGetDisplayVsyncEvent(&disp, &vsyncEvent);
+    if(R_FAILED(rc))
+        fatalThrow(rc);
+
+    rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
+    if(R_FAILED(rc))
+        fatalThrow(rc);
+
+    svcCloseHandle(debughandle);
+    svcSleepThread(frameAdvanceWaitTimeNs);
+
+    rc = svcDebugActiveProcess(&debughandle, pid);
+    if (R_FAILED(rc) && debugResultCodes)
+        printf("svcDebugActiveProcess: %d\n", rc);
+
+    svcSetThreadPriority(CUR_THREAD_HANDLE, cur_priority);
+
+    eventClose(&vsyncEvent);
+    viCloseDisplay(&disp);
 }
 
 u64 getMainNsoBase(u64 pid){
@@ -524,4 +564,16 @@ void clickSequence(char* seq, u8* token)
 
         command = strtok(NULL, &delim);
     }
+}
+
+void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y)
+{
+    controllerState.buttons = btnState;
+    setStickState(JOYSTICK_LEFT, joy_l_x, joy_l_y);
+    setStickState(JOYSTICK_RIGHT, joy_r_x, joy_r_y);
+}
+
+void resetControllerState()
+{
+    setControllerState(0, 0, 0, 0, 0);
 }

@@ -455,6 +455,11 @@ int argmain(int argc, char **argv)
             u8 fControllerType = (u8)parseStringToInt(argv[2]);
             controllerInitializedType = fControllerType;
         }
+
+        if(!strcmp(argv[1], "frameAdvanceWaitTimeNs")){
+            u32 fFrameAdvanceWaitTimeNs = (u32)parseStringToInt(argv[2]);
+            frameAdvanceWaitTimeNs = fFrameAdvanceWaitTimeNs;
+        }
     }
 
     if(!strcmp(argv[0], "getTitleID")){
@@ -882,6 +887,32 @@ int argmain(int argc, char **argv)
 	{
         printf("%d\n", fd_count);
     }
+
+    // self-added commands
+    if (!strcmp(argv[0], "pause")) attach();
+    if (!strcmp(argv[0], "unpause")) detach();
+    if (!strcmp(argv[0], "advance"))
+    {
+        if (argc == 1) advance_one_frame();
+        else
+        {
+            if (argc != 2) return 0;
+            u16 numFrames = (u16)parseStringToInt(argv[1]);
+            for (int i = 0; i < numFrames; ++i) advance_one_frame();
+        }
+    }
+    if (!strcmp(argv[0], "setControllerState"))
+    {
+        if (argc != 6) return 0;
+        u64 btnState = parseStringToInt(argv[1]);
+        int joy_l_x = strtol(argv[2], NULL, 0);
+        int joy_l_y = strtol(argv[3], NULL, 0);
+        int joy_r_x = strtol(argv[4], NULL, 0);
+        int joy_r_y = strtol(argv[5], NULL, 0);
+        setControllerState(btnState, joy_l_x, joy_l_y, joy_r_x, joy_r_y);
+
+    }
+    if (!strcmp(argv[0], "resetControllerState")) resetControllerState();
 
     return 0;
 }

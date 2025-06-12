@@ -12,6 +12,10 @@ extern u64 keyPressSleepTime;
 extern u64 pollRate;
 extern u32 fingerDiameter;
 
+extern u32 frameAdvanceWaitTimeNs;
+extern ViDisplay disp;
+extern Event vsyncEvent;
+
 typedef struct {
     u64 main_nso_base;
     u64 heap_base;
@@ -64,3 +68,8 @@ u64 followMainPointer(s64* jumps, size_t count);
 void touch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold, u8* token);
 void key(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount);
 void clickSequence(char* seq, u8* token);
+
+// self-added
+void advance_one_frame();
+void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y);
+void resetControllerState();
