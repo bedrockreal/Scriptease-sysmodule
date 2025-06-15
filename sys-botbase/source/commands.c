@@ -86,6 +86,7 @@ void advance_one_frame()
 
     eventClose(&vsyncEvent);
     viCloseDisplay(&disp);
+    printf("#adv"); // notify pc console advanced one frame
 }
 
 u64 getMainNsoBase(u64 pid){
