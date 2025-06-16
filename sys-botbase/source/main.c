@@ -893,12 +893,12 @@ int argmain(int argc, char **argv)
     if (!strcmp(argv[0], "unpause")) detach();
     if (!strcmp(argv[0], "advance"))
     {
-        if (argc == 1) advance_one_frame();
+        if (argc == 1) advanceOneFrame();
         else
         {
             if (argc != 2) return 0;
             u16 numFrames = (u16)parseStringToInt(argv[1]);
-            for (int i = 0; i < numFrames; ++i) advance_one_frame();
+            for (int i = 0; i < numFrames; ++i) advanceOneFrame();
         }
     }
     if (!strcmp(argv[0], "setControllerState"))

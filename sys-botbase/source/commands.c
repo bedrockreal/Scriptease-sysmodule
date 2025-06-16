@@ -47,13 +47,18 @@ void attach()
 }
 
 void detach(){
-    if (debughandle != 0)
+    if (getIsPaused())
     {
         svcCloseHandle(debughandle);
     }
 }
 
-void advance_one_frame()
+inline bool getIsPaused()
+{
+    return debughandle != 0;
+}
+
+void advanceOneFrame()
 {
     s32 cur_priority;
     svcGetThreadPriority(&cur_priority, CUR_THREAD_HANDLE);
@@ -86,7 +91,6 @@ void advance_one_frame()
 
     eventClose(&vsyncEvent);
     viCloseDisplay(&disp);
-    printf("#adv"); // notify pc console advanced one frame
 }
 
 u64 getMainNsoBase(u64 pid){
@@ -175,8 +179,10 @@ void getBuildID(MetaData* meta, u64 pid){
 }
 
 MetaData getMetaData(){
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+
     MetaData meta;
-    attach();
     u64 pid = 0;    
     Result rc = pmdmntGetApplicationProcessId(&pid);
     if (R_FAILED(rc) && debugResultCodes)
@@ -188,7 +194,7 @@ MetaData getMetaData(){
     meta.titleVersion = GetTitleVersion(pid);
     getBuildID(&meta, pid);
 
-    detach();
+    if (!isPaused) detach();
     return meta;
 }
 
@@ -268,9 +274,12 @@ void detachController()
 
 void poke(u64 offset, u64 size, u8* val)
 {
-    attach();
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+
     writeMem(offset, size, val);
-    detach();
+
+    if (!isPaused) detach();
 }
 
 void writeMem(u64 offset, u64 size, u8* val)
@@ -282,10 +291,13 @@ void writeMem(u64 offset, u64 size, u8* val)
 
 void peek(u64 offset, u64 size)
 {
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+    
     u8 *out = malloc(sizeof(u8) * size);
-    attach();
     readMem(out, offset, size);
-    detach();
+
+    if (!isPaused) detach();
 
     u64 i;
     for (i = 0; i < size; i++)
@@ -298,12 +310,13 @@ void peek(u64 offset, u64 size)
 
 void peekInfinite(u64 offset, u64 size)
 {
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+
     u64 sizeRemainder = size;
     u64 totalFetched = 0;
     u64 i;
     u8 *out = malloc(sizeof(u8) * MAX_LINE_LENGTH);
-
-    attach();
     while (sizeRemainder > 0)
     {
         u64 thisBuffersize = sizeRemainder > MAX_LINE_LENGTH ? MAX_LINE_LENGTH : sizeRemainder;
@@ -316,26 +329,30 @@ void peekInfinite(u64 offset, u64 size)
 
         totalFetched += thisBuffersize;
     }
-    detach();
     printf("\n");
+
+    if (!isPaused) detach();
     free(out);
 }
 
 void peekMulti(u64* offset, u64* size, u64 count)
 {
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+
     u64 totalSize = 0;
     for (int i = 0; i < count; i++)
         totalSize += size[i];
     
     u8 *out = malloc(sizeof(u8) * totalSize);
     u64 ofs = 0;
-    attach();
     for (int i = 0; i < count; i++)
     {
         readMem(out + ofs, offset[i], size[i]);
         ofs += size[i];
     }
-    detach();
+
+    if (!isPaused) detach();
 
     u64 i;
     for (i = 0; i < totalSize; i++)
@@ -410,12 +427,13 @@ void reverseArray(u8* arr, int start, int end)
 
 u64 followMainPointer(s64* jumps, size_t count) 
 {
+    bool isPaused = getIsPaused();
+    if (!isPaused) attach();
+
 	u64 offset;
     u64 size = sizeof offset;
 	u8 *out = malloc(size);
-	MetaData meta = getMetaData(); 
-	
-	attach();
+	MetaData meta = getMetaData();
 	readMem(out, meta.main_nso_base + jumps[0], size);
 	offset = *(u64*)out;
 	int i;
@@ -427,7 +445,7 @@ u64 followMainPointer(s64* jumps, size_t count)
         if (offset == 0)
             break;
 	}
-	detach();
+    if (!isPaused) detach();
 	free(out);
 	
     return offset;

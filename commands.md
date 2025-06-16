@@ -123,4 +123,4 @@ The set of newly added commands in this fork:
 |advance|Advances the game by a specified number of frames, default 1|none; or 1. number of frames to advance|advance 10|
 |configure frameAdvanceWaitTimeNs|Configures the wait time (in ns) in `advance`. Default 10000000|1. new wait time in ns|configure frameAdvanceWaitTimeNs 20000000|
 |setControllerState|Sets state of buttons (pressed or not) and position of joysticks of the virtual controller|1. Bitmask of HidNpadButton pressed (see https://switchbrew.github.io/libnx/hid_8h.html)<br>2. X-coordinate of left joystick<br>3. Y-coordinate of left joystick<br>2. X-coordinate of right joystick<br>5. Y-coordinate of right joystick|setControllerState 10000 32767 0 0 -32767|
-|resetControllerState|resets virtual controller to idle state, equivalent to setControllerState 0 0 0 0 0|none|rsetControllerState|
+|resetControllerState|resets virtual controller to idle state, equivalent to `setControllerState 0 0 0 0 0`|none|resetControllerState|
