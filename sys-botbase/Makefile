@@ -89,6 +89,15 @@ clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).npdm $(TARGET).nso $(TARGET).elf
 
+export PROGRAM_ID := 430000000000000B
+
+sd: $(BUILD) $(OUTPUT).nsp
+	@echo writing output to sd/ ...
+	@mkdir -p $(TOPDIR)/sd/atmosphere/contents/$(PROGRAM_ID)/flags
+	@cp -f $(TARGET).nsp $(TOPDIR)/sd/atmosphere/contents/$(PROGRAM_ID)/exefs.nsp
+	@touch $(TOPDIR)/sd/atmosphere/contents/$(PROGRAM_ID)/flags/boot2.flag
+	@cp -f $(TOPDIR)/toolbox.json $(TOPDIR)/sd/atmosphere/contents/$(PROGRAM_ID)/toolbox.json
+
 #---------------------------------------------------------------------------------
 else
 .PHONY:	all
