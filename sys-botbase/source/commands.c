@@ -58,7 +58,7 @@ inline bool getIsPaused()
     return debughandle != 0;
 }
 
-void advanceOneFrame()
+void advanceFrames(int cnt)
 {
     s32 cur_priority;
     svcGetThreadPriority(&cur_priority, CUR_THREAD_HANDLE);
@@ -76,16 +76,19 @@ void advanceOneFrame()
     if(R_FAILED(rc))
         fatalThrow(rc);
 
-    rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
-    if(R_FAILED(rc))
-        fatalThrow(rc);
+    for (int i = 1; i <= cnt; ++i)
+    {
+        rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
+        if(R_FAILED(rc))
+            fatalThrow(rc);
 
-    svcCloseHandle(debughandle);
-    svcSleepThread(frameAdvanceWaitTimeNs);
+        svcCloseHandle(debughandle);
+        svcSleepThread(frameAdvanceWaitTimeNs);
 
-    rc = svcDebugActiveProcess(&debughandle, pid);
-    if (R_FAILED(rc) && debugResultCodes)
-        printf("svcDebugActiveProcess: %d\n", rc);
+        rc = svcDebugActiveProcess(&debughandle, pid);
+        if (R_FAILED(rc) && debugResultCodes)
+            printf("svcDebugActiveProcess: %d\n", rc);
+    }
 
     svcSetThreadPriority(CUR_THREAD_HANDLE, cur_priority);
 

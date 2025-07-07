@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <switch.h>
 #include "util.h"
+#include "commands.h"
 
 // taken from sys-httpd (thanks jolan!)
 static const HidsysNotificationLedPattern breathingpattern = {
@@ -52,7 +53,7 @@ static const HidsysNotificationLedPattern flashpattern = {
     },
 };
 
-int setupServerSocket()
+int setupServerSocket(int port)
 {
     int lissock;
     int yes = 1;
@@ -63,7 +64,7 @@ int setupServerSocket()
 
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = INADDR_ANY;
-    server.sin_port = htons(6000);
+    server.sin_port = htons(port);
 
     while (bind(lissock, (struct sockaddr *)&server, sizeof(server)) < 0)
     {
@@ -260,4 +261,47 @@ void flashLed()
     sendPatternStatic(&breathingpattern, HidNpadIdType_Handheld); // glow in and out x2 for docked joycons
     sendPatternStatic(&flashpattern, HidNpadIdType_No1); // big hard single glow for wireless/wired joycons or controllers
     hidsysExit();
+}
+
+int parseNxTasStr(int argc, char **argv)
+{
+    // size of ret should be 4
+    // return 0 if success
+    // at first, prev_frame = 0
+
+    if (argc != 4) return 1;
+    int cur_frame = strtol(argv[0], NULL, 0);
+    advanceFrames(cur_frame - prev_frame);
+    char *ptr = NULL;
+
+    u64 btnState = 0;
+    if (strcmp(argv[1], "NONE"))
+    {
+        ptr = strtok(argv[1], ";");
+        while (ptr != NULL)
+        {
+            // remove "KEY_"
+            btnState |= (s32) parseStringToButton(ptr + 4);
+            ptr = strtok(NULL, ";");
+        }
+    }
+
+    int stickPos[2][2];
+    for (int i = 0; i < 2; ++i)
+    {
+        ptr = strtok(argv[2 + i], ";");
+        for (int j = 0; j < 2; ++j)
+        {
+            if (ptr == NULL) return 1;
+            stickPos[i][j] = strtol(ptr, NULL, 0);
+            ptr = strtok(NULL, ";");
+        }
+    }
+
+    setControllerState(btnState, stickPos[0][0], stickPos[0][1], stickPos[1][0], stickPos[1][1]);
+    advanceFrames(1);
+    resetControllerState();
+    prev_frame = cur_frame + 1;
+
+    return 0;
 }

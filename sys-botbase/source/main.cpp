@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,17 +9,20 @@
 #include <sys/socket.h>
 #include <sys/errno.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
 #include <switch.h>
+#include <poll.h>
+#include <errno.h>
+
 #include "commands.h"
 #include "args.h"
 #include "util.h"
 #include "freeze.h"
-#include <poll.h>
 
 #define TITLE_ID 0x430000000000000B
-#define HEAP_SIZE 0x00480000
+#define HEAP_SIZE 0x00380000
 #define THREAD_SIZE 0x1A000
 #define VERSION_S "2.4"
 
@@ -52,9 +59,14 @@ u8 clickToken = 0;
 // fd counters and max size
 int fd_count = 0;
 int fd_size = 5;
+int tasfilefd = 1000;
 
 // we aren't an applet
 u32 __nx_applet_type = AppletType_None;
+
+// Needed for TAS
+int prev_frame = 0;
+int line_cnt = 0;
 
 // we override libnx internals to do a minimal init
 void __libnx_initheap(void)
@@ -103,6 +115,15 @@ void __appInit(void)
     rc = viInitialize(ViServiceType_Default);
     if (R_FAILED(rc))
         fatalThrow(rc);
+
+    // adopted from usb-botbase
+    rc = fsInitialize();
+    if (R_FAILED(rc))
+        fatalThrow(rc);
+
+    rc = fsdevMountSdmc();
+    if (R_FAILED(rc))
+        fatalThrow(rc);
 }
 
 void __appExit(void)
@@ -112,6 +133,9 @@ void __appExit(void)
     audoutExit();
     socketExit();
     viExit();
+
+    fsExit();
+    fsdevUnmountAll();
 }
 
 u64 mainLoopSleepTime = 50;
@@ -119,6 +143,32 @@ u64 freezeRate = 3;
 bool debugResultCodes = false;
 
 bool echoCommands = false;
+
+void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
+{
+    if (*fd_count == *fd_size) {
+        *fd_size *= 2;
+
+        #ifdef __cplusplus
+        *pfds = static_cast<pollfd*>(realloc(*pfds, sizeof(**pfds) * (*fd_size)));
+        #else
+        *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
+        #endif
+    }
+
+    (*pfds)[*fd_count].fd = newfd;
+    (*pfds)[*fd_count].events = POLLIN;
+
+    (*fd_count)++;
+}
+
+void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
+{
+    pfds[i] = pfds[*fd_count-1];
+
+    (*fd_count)--;
+}
+struct pollfd *pfds;
 
 void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold)
 {
@@ -148,6 +198,23 @@ void makeClickSeq(char* seq)
     currentClick = seq;
     mutexUnlock(&clickMutex);
 }
+
+#ifdef __cplusplus
+}
+
+#include "sol/sol.hpp"
+
+sol::state lua;
+// lua.open_libraries(sol::lib::base, sol::lib::package);
+
+void luaInit()
+{
+    lua.open_libraries(sol::lib::base, sol::lib::package);
+    lua.script("print('Hello from Lua 5.4.8')");
+    std::cout << std::endl;
+}
+
+#endif
 
 int argmain(int argc, char **argv)
 {
@@ -303,7 +370,12 @@ int argmain(int argc, char **argv)
             return 0;
         
         u64 sizeArg = strlen(argv[1]) + 1;
+        #ifdef __cplusplus
+        char* seqNew = static_cast<char*>(malloc(sizeArg));
+        #else
         char* seqNew = malloc(sizeArg);
+        #endif
+
         strcpy(seqNew, argv[1]);
         makeClickSeq(seqNew);
     }
@@ -453,7 +525,12 @@ int argmain(int argc, char **argv)
         if(!strcmp(argv[1], "controllerType")){
             detachController();
             u8 fControllerType = (u8)parseStringToInt(argv[2]);
+            
+            #ifdef __cplusplus
+            controllerInitializedType = static_cast<HidDeviceType>(fControllerType);
+            #else
             controllerInitializedType = fControllerType;
+            #endif
         }
 
         if(!strcmp(argv[1], "frameAdvanceWaitTimeNs")){
@@ -509,7 +586,12 @@ int argmain(int argc, char **argv)
     if(!strcmp(argv[0], "pixelPeek")){
         //errors with 0x668CE, unless debugunit flag is patched
         u64 bSize = 0x7D000;
-        char* buf = malloc(bSize); 
+        #ifdef __cplusplus
+        char* buf = static_cast<char*>(malloc(bSize)); 
+        #else
+        char* buf = malloc(bSize);
+        #endif
+
         u64 outSize = 0;
 
         Result rc = capsscCaptureForDebug(buf, bSize, &outSize);
@@ -720,7 +802,13 @@ int argmain(int argc, char **argv)
             return 0;
 
         u32 count = (argc-1)/2;
-		HidTouchState* state = calloc(count, sizeof(HidTouchState));
+		
+        #ifdef __cplusplus
+        HidTouchState* state = static_cast<HidTouchState*>(calloc(count, sizeof(HidTouchState)));
+        #else
+        HidTouchState* state = calloc(count, sizeof(HidTouchState));
+        #endif
+
         u32 i, j = 0;
         for (i = 0; i < count; ++i)
         {
@@ -737,7 +825,12 @@ int argmain(int argc, char **argv)
         if(argc != 4)
             return 0;
 
+        #ifdef __cplusplus
+        HidTouchState* state = static_cast<HidTouchState*>(calloc(1, sizeof(HidTouchState)));
+        #else
         HidTouchState* state = calloc(1, sizeof(HidTouchState));
+        #endif
+
         state->diameter_x = state->diameter_y = fingerDiameter;
         state->x = (u32) parseStringToInt(argv[1]);
         state->y = (u32) parseStringToInt(argv[2]);
@@ -752,7 +845,13 @@ int argmain(int argc, char **argv)
             return 0;
 
         u32 count = (argc-1)/2;
-		HidTouchState* state = calloc(count, sizeof(HidTouchState));
+		
+        #ifdef __cplusplus
+        HidTouchState* state = static_cast<HidTouchState*>(calloc(count, sizeof(HidTouchState)));
+        #else
+        HidTouchState* state = calloc(count, sizeof(HidTouchState));
+        #endif
+
         u32 i, j = 0;
         for (i = 0; i < count; ++i)
         {
@@ -775,7 +874,13 @@ int argmain(int argc, char **argv)
             return 0;
         
         u64 count = argc-1;
+
+        #ifdef __cplusplus
+        HiddbgKeyboardAutoPilotState* keystates = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(count, sizeof (HiddbgKeyboardAutoPilotState)));
+        #else
         HiddbgKeyboardAutoPilotState* keystates = calloc(count, sizeof (HiddbgKeyboardAutoPilotState));
+        #endif
+
         u64 i;
         for (i = 0; i < count; i++)
         {
@@ -796,7 +901,12 @@ int argmain(int argc, char **argv)
             return 0;
 
         u32 count = (argc-1)/2;
+        #ifdef __cplusplus
+        HiddbgKeyboardAutoPilotState* keystates = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(count, sizeof (HiddbgKeyboardAutoPilotState)));
+        #else
         HiddbgKeyboardAutoPilotState* keystates = calloc(count, sizeof (HiddbgKeyboardAutoPilotState));
+        #endif
+
         u64 i, j = 0;
         for (i = 0; i < count; i++)
         {
@@ -817,7 +927,13 @@ int argmain(int argc, char **argv)
             return 0;
         
         u64 count = argc-1;
+        
+        #ifdef __cplusplus
+        HiddbgKeyboardAutoPilotState* keystate = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(1, sizeof (HiddbgKeyboardAutoPilotState)));
+        #else
         HiddbgKeyboardAutoPilotState* keystate = calloc(1, sizeof (HiddbgKeyboardAutoPilotState));
+        #endif
+
         u64 i;
         for (i = 0; i < count; i++)
         {
@@ -893,13 +1009,9 @@ int argmain(int argc, char **argv)
     if (!strcmp(argv[0], "unpause")) detach();
     if (!strcmp(argv[0], "advance"))
     {
-        if (argc == 1) advanceOneFrame();
-        else
-        {
-            if (argc != 2) return 0;
-            u16 numFrames = (u16)parseStringToInt(argv[1]);
-            for (int i = 0; i < numFrames; ++i) advanceOneFrame();
-        }
+        if (argc > 2) return 0;
+        u16 numFrames = (argc == 2 ? (u16)parseStringToInt(argv[1]) : 1);
+        advanceFrames(numFrames);
     }
     if (!strcmp(argv[0], "setControllerState"))
     {
@@ -909,50 +1021,61 @@ int argmain(int argc, char **argv)
         int joy_l_y = strtol(argv[3], NULL, 0);
         int joy_r_x = strtol(argv[4], NULL, 0);
         int joy_r_y = strtol(argv[5], NULL, 0);
-        setControllerState(btnState, joy_l_x, joy_l_y, joy_r_x, joy_r_y);
+        setControllerState((HidNpadButton)(btnState), joy_l_x, joy_l_y, joy_r_x, joy_r_y);
 
     }
     if (!strcmp(argv[0], "resetControllerState")) resetControllerState();
 
-    return 0;
-}
+    if (!strcmp(argv[0], "loadTAS"))
+    {
+        if (argc != 2) return 0;
+        char filename[128] = "/scripts/";
+        strcat(filename, argv[1]);
 
-void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
-{
-    if (*fd_count == *fd_size) {
-        *fd_size *= 2;
+        prev_frame = 0;
 
-        *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
+        FILE* script = fopen(filename, "r");
+        constexpr int NXTAS_MAX_LINE_LEN = 256;
+        char line[NXTAS_MAX_LINE_LEN];
+        int line_cnt = 0;
+        while (fgets(line, NXTAS_MAX_LINE_LEN, script) != NULL)
+        {
+            int ret = parseArgs(line, &parseNxTasStr);
+            if (ret != 0)
+            {
+                printf("Error parsing line %d of %s\n", line_cnt, filename);
+                printf("%s\n", line);
+                detach();
+                break;
+            }
+            line_cnt++;
+        }
+        fclose(script);
+        resetControllerState();
     }
 
-    (*pfds)[*fd_count].fd = newfd;
-    (*pfds)[*fd_count].events = POLLIN;
-
-    (*fd_count)++;
-}
-
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
-{
-    pfds[i] = pfds[*fd_count-1];
-
-    (*fd_count)--;
+    return 0;
 }
 
 int main()
 {
+    #ifdef __cplusplus
+    char *linebuf = static_cast<char*>(malloc(sizeof(char) * MAX_LINE_LENGTH));
+    pfds = static_cast<pollfd*>(malloc(sizeof *pfds * fd_size));
+    #else
     char *linebuf = malloc(sizeof(char) * MAX_LINE_LENGTH);
+    pfds = malloc(sizeof *pfds * fd_size);
+    #endif
 
     int c = sizeof(struct sockaddr_in);
     struct sockaddr_in client;
 
-    struct pollfd *pfds = malloc(sizeof *pfds * fd_size);
-
-    int listenfd = setupServerSocket();
+    int listenfd = setupServerSocket(6000);
     pfds[0].fd = listenfd;
     pfds[0].events = POLLIN;
     fd_count = 1;
 
-    int newfd;
+    int clientfd;
 	
 	Result rc;
 	int fr_count = 0;
@@ -995,14 +1118,15 @@ int main()
             {
                 if (pfds[i].fd == listenfd) 
                 {
-                    newfd = accept(listenfd, (struct sockaddr *)&client, (socklen_t *)&c);
-                    if(newfd != -1)
+                    clientfd = accept(listenfd, (struct sockaddr *)&client, (socklen_t *)&c);
+                    if(clientfd != -1)
                     {
-                        add_to_pfds(&pfds, newfd, &fd_count, &fd_size);
-                    }else{
+                        add_to_pfds(&pfds, clientfd, &fd_count, &fd_size);
+                    }
+                    else{
                         svcSleepThread(1e+9L);
                         close(listenfd);
-                        listenfd = setupServerSocket();
+                        listenfd = setupServerSocket(6000);
                         pfds[0].fd = listenfd;
                         pfds[0].events = POLLIN;
                         break;
@@ -1013,9 +1137,10 @@ int main()
                     bool readEnd = false;
                     int readBytesSoFar = 0;
                     while(!readEnd){
-                        int len = recv(pfds[i].fd, &linebuf[readBytesSoFar], 1, 0);
+                        int len = read(pfds[i].fd, &linebuf[readBytesSoFar], 1);
                         if(len <= 0)
                         {
+                            // end of input
                             close(pfds[i].fd);
                             del_from_pfds(pfds, i, &fd_count);
                             readEnd = true;
@@ -1024,17 +1149,22 @@ int main()
                         {
                             readBytesSoFar += len;
                             if(linebuf[readBytesSoFar-1] == '\n'){
-                                readEnd = true;
+                                // end of line
                                 linebuf[readBytesSoFar - 1] = 0;
+                                if (pfds[i].fd == clientfd)
+                                {
+                                    readEnd = true;
 
-                                fflush(stdout);
-                                dup2(pfds[i].fd, STDOUT_FILENO);
+                                    if(echoCommands){
+                                        printf("%s\n",linebuf);
+                                    }
 
-                                parseArgs(linebuf, &argmain);
+                                    fflush(stdout);
+                                    dup2(pfds[i].fd, STDOUT_FILENO);
 
-                                if(echoCommands){
-                                    printf("%s\n",linebuf);
+                                    parseArgs(linebuf, &argmain);
                                 }
+                                else { }
                             }
                         }
                     }
@@ -1077,7 +1207,8 @@ void sub_freeze(void *arg)
 	bool wait_su = false;
 	int freezecount = 0;
 	
-	IDLE:while (freezecount == 0)
+	IDLE:
+    while (freezecount == 0)
 	{
 		if (*(FreezeThreadState*)arg == Exit)
 			break;

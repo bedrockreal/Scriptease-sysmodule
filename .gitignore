@@ -6,3 +6,4 @@ build
 *.nso
 *.nsp
 *.npdm
+sd/

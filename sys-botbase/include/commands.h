@@ -70,7 +70,7 @@ void key(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount);
 void clickSequence(char* seq, u8* token);
 
 // self-added
-void advanceOneFrame();
+void advanceFrames(int cnt);
 void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y);
 void resetControllerState();
 bool getIsPaused();
