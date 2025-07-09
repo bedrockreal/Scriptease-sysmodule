@@ -4,8 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
+
 #include "commands.h"
 #include "util.h"
+#include "common.h"
+#include "freeze.h"
 
 
 //Controller:
@@ -96,6 +100,15 @@ void advanceFrames(int cnt)
     viCloseDisplay(&disp);
 }
 
+u64 getPID()
+{
+    u64 pid = 0;    
+    Result rc = pmdmntGetApplicationProcessId(&pid);
+    if (R_FAILED(rc) && debugResultCodes)
+        printf("pmdmntGetApplicationProcessId: %d\n", rc);
+    return pid;
+}
+
 u64 getMainNsoBase(u64 pid){
     LoaderModuleInfo proc_modules[2];
     s32 numModules = 0;
@@ -156,8 +169,7 @@ u64 getoutsize(NsApplicationControlData* buf){
     if (R_FAILED(rc))
         fatalThrow(rc);
     u64 outsize = 0;
-    u64 pid = 0;
-    pmdmntGetApplicationProcessId(&pid);
+    u64 pid = getPID();
     rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, getTitleId(pid), buf, sizeof(NsApplicationControlData), &outsize);
     if (R_FAILED(rc)) {
         printf("nsGetApplicationControlData() failed: 0x%x\n", rc);
@@ -165,7 +177,8 @@ u64 getoutsize(NsApplicationControlData* buf){
     nsExit();
     return outsize;
 }
-void getBuildID(MetaData* meta, u64 pid){
+void getBuildID(u8* out, u64 pid){
+    // build id must be 0x20 bytes
     LoaderModuleInfo proc_modules[2];
     s32 numModules = 0;
     Result rc = ldrDmntGetProcessModuleInfo(pid, proc_modules, 2, &numModules);
@@ -178,27 +191,7 @@ void getBuildID(MetaData* meta, u64 pid){
     }else{
         proc_module = &proc_modules[0];
     }
-    memcpy(meta->buildID, proc_module->build_id, 0x20);
-}
-
-MetaData getMetaData(){
-    bool isPaused = getIsPaused();
-    if (!isPaused) attach();
-
-    MetaData meta;
-    u64 pid = 0;    
-    Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc) && debugResultCodes)
-        printf("pmdmntGetApplicationProcessId: %d\n", rc);
-    
-    meta.main_nso_base = getMainNsoBase(pid);
-    meta.heap_base =  getHeapBase(debughandle);
-    meta.titleID = getTitleId(pid);
-    meta.titleVersion = GetTitleVersion(pid);
-    getBuildID(&meta, pid);
-
-    if (!isPaused) detach();
-    return meta;
+    memcpy(out, proc_module->build_id, 0x20);
 }
 
 bool getIsProgramOpen(u64 id)
@@ -436,8 +429,11 @@ u64 followMainPointer(s64* jumps, size_t count)
 	u64 offset;
     u64 size = sizeof offset;
 	u8 *out = malloc(size);
-	MetaData meta = getMetaData();
-	readMem(out, meta.main_nso_base + jumps[0], size);
+
+    u64 pid = getPID();
+    u64 main_nso_base = getMainNsoBase(pid);
+
+	readMem(out, main_nso_base + jumps[0], size);
 	offset = *(u64*)out;
 	int i;
     for (i = 1; i < count; ++i)
@@ -598,4 +594,127 @@ void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int jo
 void resetControllerState()
 {
     setControllerState(0, 0, 0, 0, 0);
+}
+
+void loadTAS(char* arg)
+{
+    char filename[128] = "/scripts/";
+    strcat(filename, arg);
+    tas_script = fopen(filename, "r");
+    if (tas_script == NULL)
+    {
+        printf("Error opening file %s: %d (%s)\n", filename, errno, strerror(errno));
+    }
+
+    tasThreadState = 0;
+    Result rc = threadCreate(&tasThread, sub_tas, (void*)tas_script, NULL, THREAD_SIZE, 0x2C, -2); 
+    if (R_SUCCEEDED(rc))
+        rc = threadStart(&tasThread);
+}
+
+void cancelTAS()
+{
+    tasThreadState = 1;
+}
+
+
+
+void screenOff()
+{
+    ViDisplay temp_display;
+    Result rc = viOpenDisplay("Internal", &temp_display);
+    if (R_FAILED(rc))
+        rc = viOpenDefaultDisplay(&temp_display);
+    if (R_SUCCEEDED(rc))
+    {
+        rc = viSetDisplayPowerState(&temp_display, ViPowerState_NotScanning); // not scanning keeps the screen on but does not push new pixels to the display. Battery save is non-negligible and should be used where possible
+        svcSleepThread(1e+6l);
+        viCloseDisplay(&temp_display);
+
+        rc = lblInitialize();
+        if (R_FAILED(rc))
+            fatalThrow(rc);
+        lblSwitchBacklightOff(1ul);
+        lblExit();
+    }
+}
+
+void screenOn()
+{
+    ViDisplay temp_display;
+    Result rc = viOpenDisplay("Internal", &temp_display);
+    if (R_FAILED(rc))
+        rc = viOpenDefaultDisplay(&temp_display);
+    if (R_SUCCEEDED(rc))
+    {
+        rc = viSetDisplayPowerState(&temp_display, ViPowerState_On);
+        svcSleepThread(1e+6l);
+        viCloseDisplay(&temp_display);
+
+        rc = lblInitialize();
+        if (R_FAILED(rc))
+            fatalThrow(rc);
+        lblSwitchBacklightOn(1ul);
+        lblExit();
+    }
+}
+
+void freezeShort(u64 addr, s16 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeInt(u64 addr, s32 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeLongLong(u64 addr, s64 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeFloat(u64 addr, float val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeDouble(u64 addr, double val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeLongDouble(u64 addr, long double val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
 }

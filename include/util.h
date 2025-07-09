@@ -1,10 +1,6 @@
 #include <switch.h>
 #define MAX_LINE_LENGTH 344 * 32 * 2
 
-extern u64 mainLoopSleepTime;
-extern bool debugResultCodes;
-extern int prev_frame;
-
 int setupServerSocket(int port);
 u64 parseStringToInt(char* arg);
 s64 parseStringToSignedLong(char* arg);

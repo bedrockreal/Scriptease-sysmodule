@@ -8,6 +8,27 @@
 #include <switch.h>
 #include "util.h"
 #include "commands.h"
+#include "common.h"
+
+const char* const translate_keys[16] =
+{
+    "KEY_A\0",
+    "KEY_B\0",
+    "KEY_X\0", 
+    "KEY_Y\0",
+    "KEY_LSTICK\0", 
+    "KEY_RSTICK\0",
+    "KEY_L\0",
+    "KEY_R\0",
+    "KEY_ZL\0",
+    "KEY_ZR\0",
+    "KEY_PLUS\0",
+    "KEY_MINUS\0",
+    "KEY_DLEFT\0",
+    "KEY_DUP\0",
+    "KEY_DRIGHT\0",
+    "KEY_DDOWN\0"
+};
 
 // taken from sys-httpd (thanks jolan!)
 static const HidsysNotificationLedPattern breathingpattern = {
@@ -145,71 +166,13 @@ u8* parseStringToByteBuffer(char* arg, u64* size)
 
 HidNpadButton parseStringToButton(char* arg)
 {
-    if (strcmp(arg, "A") == 0)
+    for (int i = 0; i < 16; ++i)
     {
-        return HidNpadButton_A;
-    } 
-    else if (strcmp(arg, "B") == 0)
-    {
-        return HidNpadButton_B;
+        if (strcmp(translate_keys[i], arg) == 0)
+            return BIT(i);
     }
-    else if (strcmp(arg, "X") == 0)
-    {
-        return HidNpadButton_X;
-    }
-    else if (strcmp(arg, "Y") == 0)
-    {
-        return HidNpadButton_Y;
-    }
-    else if (strcmp(arg, "RSTICK") == 0)
-    {
-        return HidNpadButton_StickR;
-    }
-    else if (strcmp(arg, "LSTICK") == 0)
-    {
-        return HidNpadButton_StickL;
-    }
-    else if (strcmp(arg, "L") == 0)
-    {
-        return HidNpadButton_L;
-    }
-    else if (strcmp(arg, "R") == 0)
-    {
-        return HidNpadButton_R;
-    }
-    else if (strcmp(arg, "ZL") == 0)
-    {
-        return HidNpadButton_ZL;
-    }
-    else if (strcmp(arg, "ZR") == 0)
-    {
-        return HidNpadButton_ZR;
-    }
-    else if (strcmp(arg, "PLUS") == 0)
-    {
-        return HidNpadButton_Plus;
-    }
-    else if (strcmp(arg, "MINUS") == 0)
-    {
-        return HidNpadButton_Minus;
-    }
-    else if (strcmp(arg, "DLEFT") == 0 || strcmp(arg, "DL") == 0)
-    {
-        return HidNpadButton_Left;
-    }
-    else if (strcmp(arg, "DUP") == 0 || strcmp(arg, "DU") == 0)
-    {
-        return HidNpadButton_Up;
-    }
-    else if (strcmp(arg, "DRIGHT") == 0 || strcmp(arg, "DR") == 0)
-    {
-        return HidNpadButton_Right;
-    }
-    else if (strcmp(arg, "DDOWN") == 0 || strcmp(arg, "DD") == 0)
-    {
-        return HidNpadButton_Down;
-    }
-    else if (strcmp(arg, "HOME") == 0)
+
+    if (strcmp(arg, "HOME") == 0)
     {
         return HiddbgNpadButton_Home;
     }
@@ -280,8 +243,7 @@ int parseNxTasStr(int argc, char **argv)
         ptr = strtok(argv[1], ";");
         while (ptr != NULL)
         {
-            // remove "KEY_"
-            btnState |= (s32) parseStringToButton(ptr + 4);
+            btnState |= (s32) parseStringToButton(ptr);
             ptr = strtok(NULL, ";");
         }
     }

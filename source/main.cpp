@@ -12,7 +12,6 @@ extern "C" {
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
-#include <switch.h>
 #include <poll.h>
 #include <errno.h>
 
@@ -20,33 +19,17 @@ extern "C" {
 #include "args.h"
 #include "util.h"
 #include "freeze.h"
+#include "common.h"
 
-#define TITLE_ID 0x430000000000000B
-#define HEAP_SIZE 0x00380000
-#define THREAD_SIZE 0x1A000
-#define VERSION_S "2.4"
-
-typedef enum {
-    Active = 0,
-    Exit = 1,
-    Idle = 2,
-    Pause = 3
-} FreezeThreadState;
-
-Thread freezeThread, touchThread, keyboardThread, clickThread;
-
-// prototype thread functions to give the illusion of cleanliness
-void sub_freeze(void *arg);
-void sub_touch(void *arg);
-void sub_key(void *arg);
-void sub_click(void *arg);
+Thread freezeThread, touchThread, keyboardThread, clickThread, tasThread;
+FILE* tas_script = NULL;
 
 // locks for thread
-Mutex freezeMutex, touchMutex, keyMutex, clickMutex;
+Mutex freezeMutex, touchMutex, keyMutex, clickMutex, tasMutex;
 
 // events for releasing or idling threads
 FreezeThreadState freeze_thr_state = Active; 
-u8 clickThreadState = 0; // 1 = break thread
+u8 clickThreadState = 0, tasThreadState = 0; // 1 = break thread
 // key and touch events currently being processed
 KeyData currentKeyEvent = {0};
 TouchData currentTouchEvent = {0};
@@ -67,6 +50,13 @@ u32 __nx_applet_type = AppletType_None;
 // Needed for TAS
 int prev_frame = 0;
 int line_cnt = 0;
+
+u64 mainLoopSleepTime = 50;
+u64 freezeRate = 3;
+bool debugResultCodes = false;
+bool echoCommands = false;
+
+struct pollfd *pfds;
 
 // we override libnx internals to do a minimal init
 void __libnx_initheap(void)
@@ -138,12 +128,6 @@ void __appExit(void)
     fsdevUnmountAll();
 }
 
-u64 mainLoopSleepTime = 50;
-u64 freezeRate = 3;
-bool debugResultCodes = false;
-
-bool echoCommands = false;
-
 void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
 {
     if (*fd_count == *fd_size) {
@@ -168,7 +152,6 @@ void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
 
     (*fd_count)--;
 }
-struct pollfd *pfds;
 
 void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold)
 {
@@ -204,15 +187,12 @@ void makeClickSeq(char* seq)
 
 #include "sol/sol.hpp"
 
-sol::state lua;
-// lua.open_libraries(sol::lib::base, sol::lib::package);
-
-void luaInit()
-{
-    lua.open_libraries(sol::lib::base, sol::lib::package);
-    lua.script("print('Hello from Lua 5.4.8')");
-    std::cout << std::endl;
-}
+// #include "lua_switch.hpp"
+// #include "lua_svc.hpp"
+// #include "lua_hid.hpp"
+// #include "lua_hiddbg.hpp"
+// #include "lua_vi.hpp"
+#include "lua_wrap.hpp"
 
 #endif
 
@@ -221,96 +201,7 @@ int argmain(int argc, char **argv)
     if (argc == 0)
         return 0;
 
-
-    //peek <address in hex or dec> <amount of bytes in hex or dec>
-    if (!strcmp(argv[0], "peek"))
-    {
-        if(argc != 3)
-            return 0;
-
-        MetaData meta = getMetaData();
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = parseStringToInt(argv[2]);
-        peekInfinite(meta.heap_base + offset, size);
-    }
-
-    if (!strcmp(argv[0], "peekMulti"))
-    {
-        if(argc < 3 || argc % 2 == 0)
-            return 0;
-
-        MetaData meta = getMetaData();
-
-        u64 itemCount = (argc - 1)/2;
-        u64 offsets[itemCount];
-        u64 sizes[itemCount];
-
-        for (int i = 0; i < itemCount; ++i)
-        {
-            offsets[i] = meta.heap_base + parseStringToInt(argv[(i*2)+1]);
-            sizes[i] = parseStringToInt(argv[(i*2)+2]);
-        }
-        peekMulti(offsets, sizes, itemCount);
-    }
-
-    if (!strcmp(argv[0], "peekAbsolute"))
-    {
-        if(argc != 3)
-            return 0;
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = parseStringToInt(argv[2]);
-        peekInfinite(offset, size);
-    }
-
-    if (!strcmp(argv[0], "peekAbsoluteMulti"))
-    {
-        if(argc < 3 || argc % 2 == 0)
-            return 0;
-
-        u64 itemCount = (argc - 1)/2;
-        u64 offsets[itemCount];
-        u64 sizes[itemCount];
-
-        for (int i = 0; i < itemCount; ++i)
-        {
-            offsets[i] = parseStringToInt(argv[(i*2)+1]);
-            sizes[i] = parseStringToInt(argv[(i*2)+2]);
-        }
-        peekMulti(offsets, sizes, itemCount);
-    }
-
-    if (!strcmp(argv[0], "peekMain"))
-    {
-        if(argc != 3)
-            return 0;
-
-        MetaData meta = getMetaData();
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = parseStringToInt(argv[2]);
-        peekInfinite(meta.main_nso_base + offset, size);
-    }
-
-    if (!strcmp(argv[0], "peekMainMulti"))
-    {
-        if(argc < 3 || argc % 2 == 0)
-            return 0;
-
-        MetaData meta = getMetaData();
-
-        u64 itemCount = (argc - 1)/2;
-        u64 offsets[itemCount];
-        u64 sizes[itemCount];
-
-        for (int i = 0; i < itemCount; ++i)
-        {
-            offsets[i] = meta.main_nso_base + parseStringToInt(argv[(i*2)+1]);
-            sizes[i] = parseStringToInt(argv[(i*2)+2]);
-        }
-        peekMulti(offsets, sizes, itemCount);
-    }
+    /*
 
     //poke <address in hex or dec> <data in hex or dec>
     if (!strcmp(argv[0], "poke"))
@@ -351,16 +242,8 @@ int argmain(int argc, char **argv)
         u8* data = parseStringToByteBuffer(argv[2], &size);
         poke(meta.main_nso_base + offset, size, data);
         free(data);
-    } 
-
-    //click <buttontype>
-    if (!strcmp(argv[0], "click"))
-    {
-        if(argc != 2)
-            return 0;
-        HidNpadButton key = parseStringToButton(argv[1]);
-        click(key);
     }
+    */
 
     //clickSeq <sequence> eg clickSeq A,W1000,B,W200,DUP,W500,DD,W350,%5000,1500,W2650,%0,0 (some params don't parse correctly, such as DDOWN so use the alt)
     //syntax: <button>=click, 'W<number>'=wait/sleep thread, '+<button>'=press button, '-<button>'=release button, '%<x axis>,<y axis>'=move L stick <x axis, y axis>, '&<x axis>,<y axis>'=move R stick <x axis, y axis> 
@@ -382,49 +265,6 @@ int argmain(int argc, char **argv)
 
     if (!strcmp(argv[0], "clickCancel"))
         clickToken = 1;
-
-    //hold <buttontype>
-    if (!strcmp(argv[0], "press"))
-    {
-        if(argc != 2)
-            return 0;
-        HidNpadButton key = parseStringToButton(argv[1]);
-        press(key);
-    }
-
-    //release <buttontype>
-    if (!strcmp(argv[0], "release"))
-    {
-        if(argc != 2)
-            return 0;
-        HidNpadButton key = parseStringToButton(argv[1]);
-        release(key);
-    }
-
-    //setStick <left or right stick> <x value> <y value>
-    if (!strcmp(argv[0], "setStick"))
-    {
-        if(argc != 4)
-            return 0;
-        
-        int side = 0;
-        if(!strcmp(argv[1], "LEFT")){
-            side = JOYSTICK_LEFT;
-        }else if(!strcmp(argv[1], "RIGHT")){
-            side = JOYSTICK_RIGHT;
-        }else{
-            return 0;
-        }
-
-        int dxVal = strtol(argv[2], NULL, 0);
-        if(dxVal > JOYSTICK_MAX) dxVal = JOYSTICK_MAX; //0x7FFF
-        if(dxVal < JOYSTICK_MIN) dxVal = JOYSTICK_MIN; //-0x8000
-        int dyVal = strtol(argv[3], NULL, 0);
-        if(dyVal > JOYSTICK_MAX) dyVal = JOYSTICK_MAX;
-        if(dyVal < JOYSTICK_MIN) dyVal = JOYSTICK_MIN;
-
-        setStickState(side, dxVal, dyVal);
-    }
 
     //detachController
     if(!strcmp(argv[0], "detachController"))
@@ -539,16 +379,6 @@ int argmain(int argc, char **argv)
         }
     }
 
-    if(!strcmp(argv[0], "getTitleID")){
-        MetaData meta = getMetaData();
-        printf("%016lX\n", meta.titleID);
-    }
-
-    if(!strcmp(argv[0], "getTitleVersion")){
-        MetaData meta = getMetaData();
-        printf("%016lX\n", meta.titleVersion);
-    }
-
     if(!strcmp(argv[0], "getSystemLanguage")){
         //thanks zaksa
         setInitialize();
@@ -557,30 +387,6 @@ int argmain(int argc, char **argv)
         setGetSystemLanguage(&languageCode);   
         setMakeLanguage(languageCode, &language);
         printf("%d\n", language);
-    }
- 
-    if(!strcmp(argv[0], "getMainNsoBase")){
-        MetaData meta = getMetaData();
-        printf("%016lX\n", meta.main_nso_base);
-    }
-    
-    if(!strcmp(argv[0], "getBuildID")){
-        MetaData meta = getMetaData();
-        printf("%02x%02x%02x%02x%02x%02x%02x%02x\n", meta.buildID[0], meta.buildID[1], meta.buildID[2], meta.buildID[3], meta.buildID[4], meta.buildID[5], meta.buildID[6], meta.buildID[7]);
-
-    }
-
-    if(!strcmp(argv[0], "getHeapBase")){
-        MetaData meta = getMetaData();
-        printf("%016lX\n", meta.heap_base);
-    }
-
-    if(!strcmp(argv[0], "isProgramRunning")){
-        if(argc != 2)
-            return 0;
-        u64 programId = parseStringToInt(argv[1]);
-        bool isRunning = getIsProgramOpen(programId);
-        printf("%d\n", isRunning);
     }
 
     if(!strcmp(argv[0], "pixelPeek")){
@@ -658,8 +464,9 @@ int argmain(int argc, char **argv)
         if (solved != 0)
         {
             solved += finalJump;
-            MetaData meta = getMetaData();
-            solved -= meta.heap_base;
+            // MetaData meta = getMetaData();
+            u64 pid = getPID();
+            solved -= getHeapBase(pid);
         }
 		printf("%016lX\n", solved);
 	}
@@ -716,7 +523,7 @@ int argmain(int argc, char **argv)
             u64 size = parseStringToSignedLong(argv[lastIndex]);
             u64 count = thisCount - 2;
             s64 jumps[count];
-            for (int i = 1; i < count+1; i++)
+            for (int i = 1; i <= count; i++)
                 jumps[i-1] = parseStringToSignedLong(argv[i+lastIndex]);
             u64 solved = followMainPointer(jumps, count);
             solved += finalJump;
@@ -751,49 +558,6 @@ int argmain(int argc, char **argv)
         poke(solved, size, data);
         free(data);
 	}
-	
-	// add to freeze map
-	if (!strcmp(argv[0], "freeze"))
-    {
-        if(argc != 3)
-            return 0;
-		
-		MetaData meta = getMetaData();
-		
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = 0;
-        u8* data = parseStringToByteBuffer(argv[2], &size);
-        addToFreezeMap(offset, data, size, meta.titleID);
-    }
-	
-	// remove from freeze map
-	if (!strcmp(argv[0], "unFreeze"))
-    {
-        if(argc != 2)
-            return 0;
-		
-        u64 offset = parseStringToInt(argv[1]);
-        removeFromFreezeMap(offset);
-    }
-	
-	// get count of offsets being frozen
-	if (!strcmp(argv[0], "freezeCount"))
-	{
-		getFreezeCount(true);
-	}
-	
-	// clear all freezes
-	if (!strcmp(argv[0], "freezeClear"))
-	{
-		clearFreezes();
-		freeze_thr_state = Idle;
-	}
-
-    if (!strcmp(argv[0], "freezePause"))
-		freeze_thr_state = Pause;
-
-    if (!strcmp(argv[0], "freezeUnpause"))
-		freeze_thr_state = Active;
 	
     //touch followed by arrayof: <x in the range 0-1280> <y in the range 0-720>. Array is sequential taps, not different fingers. Functions in its own thread, but will not allow the call again while running. tapcount * pollRate * 2
     if (!strcmp(argv[0], "touch"))
@@ -945,48 +709,6 @@ int argmain(int argc, char **argv)
 
         makeKeys(keystate, 1);
     }
-
-    //turns off the screen (display)
-    if (!strcmp(argv[0], "screenOff"))
-	{
-        ViDisplay temp_display;
-        Result rc = viOpenDisplay("Internal", &temp_display);
-        if (R_FAILED(rc))
-            rc = viOpenDefaultDisplay(&temp_display);
-        if (R_SUCCEEDED(rc))
-        {
-            rc = viSetDisplayPowerState(&temp_display, ViPowerState_NotScanning); // not scanning keeps the screen on but does not push new pixels to the display. Battery save is non-negligible and should be used where possible
-            svcSleepThread(1e+6l);
-            viCloseDisplay(&temp_display);
-
-            rc = lblInitialize();
-            if (R_FAILED(rc))
-                fatalThrow(rc);
-            lblSwitchBacklightOff(1ul);
-            lblExit();
-        }
-    }
-
-    //turns on the screen (display)
-    if (!strcmp(argv[0], "screenOn"))
-	{
-        ViDisplay temp_display;
-        Result rc = viOpenDisplay("Internal", &temp_display);
-        if (R_FAILED(rc))
-            rc = viOpenDefaultDisplay(&temp_display);
-        if (R_SUCCEEDED(rc))
-        {
-            rc = viSetDisplayPowerState(&temp_display, ViPowerState_On);
-            svcSleepThread(1e+6l);
-            viCloseDisplay(&temp_display);
-
-            rc = lblInitialize();
-            if (R_FAILED(rc))
-                fatalThrow(rc);
-            lblSwitchBacklightOn(1ul);
-            lblExit();
-        }
-    }
     
     if (!strcmp(argv[0], "charge"))
 	{
@@ -1004,15 +726,6 @@ int argmain(int argc, char **argv)
         printf("%d\n", fd_count);
     }
 
-    // self-added commands
-    if (!strcmp(argv[0], "pause")) attach();
-    if (!strcmp(argv[0], "unpause")) detach();
-    if (!strcmp(argv[0], "advance"))
-    {
-        if (argc > 2) return 0;
-        u16 numFrames = (argc == 2 ? (u16)parseStringToInt(argv[1]) : 1);
-        advanceFrames(numFrames);
-    }
     if (!strcmp(argv[0], "setControllerState"))
     {
         if (argc != 6) return 0;
@@ -1029,29 +742,7 @@ int argmain(int argc, char **argv)
     if (!strcmp(argv[0], "loadTAS"))
     {
         if (argc != 2) return 0;
-        char filename[128] = "/scripts/";
-        strcat(filename, argv[1]);
-
-        prev_frame = 0;
-
-        FILE* script = fopen(filename, "r");
-        constexpr int NXTAS_MAX_LINE_LEN = 256;
-        char line[NXTAS_MAX_LINE_LEN];
-        int line_cnt = 0;
-        while (fgets(line, NXTAS_MAX_LINE_LEN, script) != NULL)
-        {
-            int ret = parseArgs(line, &parseNxTasStr);
-            if (ret != 0)
-            {
-                printf("Error parsing line %d of %s\n", line_cnt, filename);
-                printf("%s\n", line);
-                detach();
-                break;
-            }
-            line_cnt++;
-        }
-        fclose(script);
-        resetControllerState();
+        loadTAS(argv[1]);
     }
 
     return 0;
@@ -1106,6 +797,11 @@ int main()
     if (R_SUCCEEDED(rc))
         rc = threadStart(&clickThread);
 
+    // TAS thread (culprit)
+    mutexInit(&tasMutex);
+
+    sol::state lua;
+    luaInit(lua);
     flashLed();
 
     while (true)
@@ -1154,15 +850,21 @@ int main()
                                 if (pfds[i].fd == clientfd)
                                 {
                                     readEnd = true;
+                                    printf("%s\n",linebuf);
 
-                                    if(echoCommands){
-                                        printf("%s\n",linebuf);
-                                    }
-
-                                    fflush(stdout);
                                     dup2(pfds[i].fd, STDOUT_FILENO);
 
-                                    parseArgs(linebuf, &argmain);
+                                    // parseArgs(linebuf, &argmain);
+
+                                    try
+                                    {
+                                        lua.safe_script(linebuf);
+                                    }
+                                    catch(const sol::error& e)
+                                    {
+                                        printf("%s\n", e.what());
+                                    }
+                                    fflush(stdout);
                                 }
                                 else { }
                             }
@@ -1171,7 +873,7 @@ int main()
                 }
             }
         }
-		fr_count = getFreezeCount(false);
+		fr_count = getFreezeCount();
 		if (fr_count == 0)
 			freeze_thr_state = Idle;
 		mutexUnlock(&freezeMutex);
@@ -1183,14 +885,22 @@ int main()
 	    freeze_thr_state = Exit;
 		threadWaitForExit(&freezeThread);
         threadClose(&freezeThread);
+
         currentTouchEvent.state = 3;
         threadWaitForExit(&touchThread);
         threadClose(&touchThread);
+
         currentKeyEvent.state = 3;
         threadWaitForExit(&keyboardThread);
         threadClose(&keyboardThread);
+        
         clickThreadState = 1;
         threadWaitForExit(&clickThread);
+        threadClose(&clickThread);
+
+        // tasThreadState = 1;
+        // threadWaitForExit(&tasThread);
+        // threadClose(&tasThread);
 	}
 	
 	clearFreezes();
@@ -1215,7 +925,7 @@ void sub_freeze(void *arg)
 		
 		// do nothing
 		svcSleepThread(1e+9L);
-		freezecount = getFreezeCount(false);
+		freezecount = getFreezeCount();
 	}
 	
 	while (1)
@@ -1346,4 +1056,33 @@ void sub_click(void *arg)
 
         svcSleepThread(1e+6L);
     }
+}
+
+void sub_tas(void *arg)
+{
+    if (tas_script == NULL) return;
+    if (!getIsPaused()) attach();
+
+    prev_frame = 0;
+    constexpr int NXTAS_MAX_LINE_LEN = 256;
+    char line[NXTAS_MAX_LINE_LEN];
+    int line_cnt = 0;
+
+    while (fgets(line, NXTAS_MAX_LINE_LEN, tas_script) != NULL)
+    {
+        int ret = parseArgs(line, &parseNxTasStr);
+        if (ret != 0)
+        {
+            printf("Error parsing line %d\n", line_cnt);
+            printf("%s\n", line);
+            detach();
+            break;
+        }
+        line_cnt++;
+
+        if (tasThreadState == 1) break;
+    }
+    fclose(tas_script);
+    tas_script = NULL;
+    resetControllerState();
 }

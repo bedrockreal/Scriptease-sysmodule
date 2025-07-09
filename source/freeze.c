@@ -68,18 +68,13 @@ int removeFromFreezeMap(u64 addr)
 	return slot;
 }
 
-int getFreezeCount(bool print)
+int getFreezeCount()
 {
 	int count = 0;
 	for (int i = 0; i < FREEZE_DIC_LENGTH; i++)
 	{
 		if (freezes[i].state != 0)
 			++count;
-	}
-	if (print)
-	{
-		printf("%02X", count);
-		printf("\n");
 	}
 	return count;
 }
