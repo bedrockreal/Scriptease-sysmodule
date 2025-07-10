@@ -725,38 +725,13 @@ int argmain(int argc, char **argv)
 	{
         printf("%d\n", fd_count);
     }
-
-    if (!strcmp(argv[0], "setControllerState"))
-    {
-        if (argc != 6) return 0;
-        u64 btnState = parseStringToInt(argv[1]);
-        int joy_l_x = strtol(argv[2], NULL, 0);
-        int joy_l_y = strtol(argv[3], NULL, 0);
-        int joy_r_x = strtol(argv[4], NULL, 0);
-        int joy_r_y = strtol(argv[5], NULL, 0);
-        setControllerState((HidNpadButton)(btnState), joy_l_x, joy_l_y, joy_r_x, joy_r_y);
-
-    }
-    if (!strcmp(argv[0], "resetControllerState")) resetControllerState();
-
-    if (!strcmp(argv[0], "loadTAS"))
-    {
-        if (argc != 2) return 0;
-        loadTAS(argv[1]);
-    }
-
     return 0;
 }
 
 int main()
 {
-    #ifdef __cplusplus
     char *linebuf = static_cast<char*>(malloc(sizeof(char) * MAX_LINE_LENGTH));
     pfds = static_cast<pollfd*>(malloc(sizeof *pfds * fd_size));
-    #else
-    char *linebuf = malloc(sizeof(char) * MAX_LINE_LENGTH);
-    pfds = malloc(sizeof *pfds * fd_size);
-    #endif
 
     int c = sizeof(struct sockaddr_in);
     struct sockaddr_in client;
@@ -792,10 +767,10 @@ int main()
         rc = threadStart(&keyboardThread);
 
     // click sequence thread
-    mutexInit(&clickMutex);
-    rc = threadCreate(&clickThread, sub_click, (void*)currentClick, NULL, THREAD_SIZE, 0x2C, -2); 
-    if (R_SUCCEEDED(rc))
-        rc = threadStart(&clickThread);
+    // mutexInit(&clickMutex);
+    // rc = threadCreate(&clickThread, sub_click, (void*)currentClick, NULL, THREAD_SIZE, 0x2C, -2); 
+    // if (R_SUCCEEDED(rc))
+    //     rc = threadStart(&clickThread);
 
     // TAS thread (culprit)
     mutexInit(&tasMutex);
@@ -850,7 +825,7 @@ int main()
                                 if (pfds[i].fd == clientfd)
                                 {
                                     readEnd = true;
-                                    printf("%s\n",linebuf);
+                                    // printf("%s\n",linebuf);
 
                                     dup2(pfds[i].fd, STDOUT_FILENO);
 

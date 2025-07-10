@@ -70,7 +70,7 @@ bool getIsPaused();
 void advanceFrames(int cnt);
 void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y);
 void resetControllerState();
-void loadTAS(char* arg);
+void loadTAS(const char* arg);
 void cancelTAS();
 
 void screenOff();

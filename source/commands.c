@@ -394,6 +394,10 @@ void release(HidNpadButton btn)
 
 void setStickState(int side, int dxVal, int dyVal)
 {
+    // check oob
+    if (abs(dxVal) > 0x7fff || abs(dyVal) > 0x7fff) return;
+    if (dxVal * dxVal + dyVal * dyVal > 0x7fff * 0x7fff) return;
+    
     initController();
     if (side == JOYSTICK_LEFT)
     {	
@@ -586,7 +590,8 @@ void clickSequence(char* seq, u8* token)
 
 void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y)
 {
-    controllerState.buttons = btnState;
+    printf("%lu\n", btnState);
+    if (btnState < (1 << 16)) controllerState.buttons = btnState;
     setStickState(JOYSTICK_LEFT, joy_l_x, joy_l_y);
     setStickState(JOYSTICK_RIGHT, joy_r_x, joy_r_y);
 }
@@ -596,7 +601,7 @@ void resetControllerState()
     setControllerState(0, 0, 0, 0, 0);
 }
 
-void loadTAS(char* arg)
+void loadTAS(const char* arg)
 {
     char filename[128] = "/scripts/";
     strcat(filename, arg);
@@ -604,10 +609,11 @@ void loadTAS(char* arg)
     if (tas_script == NULL)
     {
         printf("Error opening file %s: %d (%s)\n", filename, errno, strerror(errno));
+        return;
     }
 
     tasThreadState = 0;
-    Result rc = threadCreate(&tasThread, sub_tas, (void*)tas_script, NULL, THREAD_SIZE, 0x2C, -2); 
+    Result rc = threadCreate(&tasThread, sub_tas, (void*)tas_script, NULL, THREAD_SIZE, 0x2C, -2);
     if (R_SUCCEEDED(rc))
         rc = threadStart(&tasThread);
 }

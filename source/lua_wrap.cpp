@@ -1,6 +1,7 @@
 #include "lua_wrap.hpp"
 
 #include <vector>
+#include <string>
 
 extern "C"
 {
@@ -49,17 +50,11 @@ void lua_clearFreezes()
 void lua_pauseFreezes() { freeze_thr_state = Pause; }
 void lua_unpauseFreezes() { freeze_thr_state = Active; }
 
+void lua_loadTAS(std::string arg) { loadTAS(arg.c_str()); }
+
 void luaInit(sol::state& lua)
 {
-    // adopted from tas-script
     lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::table, sol::lib::io, sol::lib::string, sol::lib::math);
-
-    // Register Lua functions
-    // registerSVC(lua);
-    // registerHID(lua);
-    // registerHIDDBG(lua);
-    // registerVI(lua);
-    // registerSwitch(lua);
 
     // register types
 
@@ -87,7 +82,7 @@ void luaInit(sol::state& lua)
     lua.set_function("resetControllerState", &resetControllerState);
     // lua.set_function("followMainPointer", &followMainPointer);
     lua.set_function("getIsPaused", &getIsPaused);
-    lua.set_function("loadTAS", &loadTAS);
+    lua.set_function("loadTAS", &lua_loadTAS);
     lua.set_function("cancelTAS", &cancelTAS);
 
     // utilities
