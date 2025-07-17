@@ -23,6 +23,10 @@ void sub_key(void *arg);
 void sub_click(void *arg);
 void sub_tas(void *arg);
 
+// make utils
+void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold);
+void makeKeys(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount);
+
 extern FILE* tas_script;
 
 // locks for thread
@@ -44,7 +48,6 @@ extern u8 clickToken;
 // fd counters and max size
 extern int fd_count;
 extern int fd_size;
-extern int tasfilefd;
 
 // we aren't an applet
 extern u32 __nx_applet_type;
@@ -53,10 +56,12 @@ extern u32 __nx_applet_type;
 extern int prev_frame;
 extern int line_cnt;
 
-extern u64 mainLoopSleepTime;
 extern u64 freezeRate;
-extern bool debugResultCodes;
-extern bool echoCommands;
+
 extern struct pollfd *pfds;
+
+// Screen
+extern ViDisplay disp;
+extern Event vsyncEvent;
 
 extern const char* const translate_keys[16];

@@ -234,9 +234,9 @@ int parseNxTasStr(int argc, char **argv)
 
     if (argc != 4) return 1;
     int cur_frame = strtol(argv[0], NULL, 0);
-    advanceFrames(cur_frame - prev_frame);
-    char *ptr = NULL;
+    if (cur_frame > prev_frame) advanceFrames(cur_frame - prev_frame);
 
+    char *ptr = NULL;
     u64 btnState = 0;
     if (strcmp(argv[1], "NONE"))
     {

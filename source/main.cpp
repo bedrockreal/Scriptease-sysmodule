@@ -42,7 +42,6 @@ u8 clickToken = 0;
 // fd counters and max size
 int fd_count = 0;
 int fd_size = 5;
-int tasfilefd = 1000;
 
 // we aren't an applet
 u32 __nx_applet_type = AppletType_None;
@@ -51,12 +50,12 @@ u32 __nx_applet_type = AppletType_None;
 int prev_frame = 0;
 int line_cnt = 0;
 
-u64 mainLoopSleepTime = 50;
 u64 freezeRate = 3;
-bool debugResultCodes = false;
-bool echoCommands = false;
 
 struct pollfd *pfds;
+
+ViDisplay disp;
+Event vsyncEvent;
 
 // we override libnx internals to do a minimal init
 void __libnx_initheap(void)
@@ -102,7 +101,7 @@ void __appInit(void)
     rc = capsscInitialize();
     if (R_FAILED(rc))
         fatalThrow(rc);
-    rc = viInitialize(ViServiceType_Default);
+    rc = viInitialize(ViServiceType_System);
     if (R_FAILED(rc))
         fatalThrow(rc);
 
@@ -116,12 +115,39 @@ void __appInit(void)
         fatalThrow(rc);
 }
 
+void __attribute__((weak)) userAppExit(void);
+
 void __appExit(void)
 {
+    // if (R_SUCCEEDED(rc))
+    {
+	    freeze_thr_state = Exit;
+		threadWaitForExit(&freezeThread);
+        threadClose(&freezeThread);
+
+        currentTouchEvent.state = 3;
+        threadWaitForExit(&touchThread);
+        threadClose(&touchThread);
+
+        currentKeyEvent.state = 3;
+        threadWaitForExit(&keyboardThread);
+        threadClose(&keyboardThread);
+        
+        clickThreadState = 1;
+        threadWaitForExit(&clickThread);
+        threadClose(&clickThread);
+	}
+	
+	clearFreezes();
+    freeFreezes();
+
     smExit();
     nsExit();
     audoutExit();
     socketExit();
+
+    eventClose(&vsyncEvent);
+    viCloseDisplay(&disp);
     viExit();
 
     fsExit();
@@ -133,11 +159,7 @@ void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
     if (*fd_count == *fd_size) {
         *fd_size *= 2;
 
-        #ifdef __cplusplus
         *pfds = static_cast<pollfd*>(realloc(*pfds, sizeof(**pfds) * (*fd_size)));
-        #else
-        *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
-        #endif
     }
 
     (*pfds)[*fd_count].fd = newfd;
@@ -175,389 +197,17 @@ void makeKeys(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount)
     mutexUnlock(&keyMutex);
 }
 
-void makeClickSeq(char* seq)
-{
-    mutexLock(&clickMutex);
-    currentClick = seq;
-    mutexUnlock(&clickMutex);
-}
-
 #ifdef __cplusplus
 }
 
-#include "sol/sol.hpp"
-
-// #include "lua_switch.hpp"
-// #include "lua_svc.hpp"
-// #include "lua_hid.hpp"
-// #include "lua_hiddbg.hpp"
-// #include "lua_vi.hpp"
 #include "lua_wrap.hpp"
-
 #endif
 
+/*
 int argmain(int argc, char **argv)
 {
     if (argc == 0)
         return 0;
-
-    /*
-
-    //poke <address in hex or dec> <data in hex or dec>
-    if (!strcmp(argv[0], "poke"))
-    {
-        if(argc != 3)
-            return 0;
-            
-        MetaData meta = getMetaData();
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = 0;
-        u8* data = parseStringToByteBuffer(argv[2], &size);
-        poke(meta.heap_base + offset, size, data);
-        free(data);
-    } 
-    
-    if (!strcmp(argv[0], "pokeAbsolute"))
-    {
-        if(argc != 3)
-            return 0;
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = 0;
-        u8* data = parseStringToByteBuffer(argv[2], &size);
-        poke(offset, size, data);
-        free(data);
-    }
-        
-    if (!strcmp(argv[0], "pokeMain"))
-    {
-        if(argc != 3)
-            return 0;
-            
-        MetaData meta = getMetaData();
-
-        u64 offset = parseStringToInt(argv[1]);
-        u64 size = 0;
-        u8* data = parseStringToByteBuffer(argv[2], &size);
-        poke(meta.main_nso_base + offset, size, data);
-        free(data);
-    }
-    */
-
-    //clickSeq <sequence> eg clickSeq A,W1000,B,W200,DUP,W500,DD,W350,%5000,1500,W2650,%0,0 (some params don't parse correctly, such as DDOWN so use the alt)
-    //syntax: <button>=click, 'W<number>'=wait/sleep thread, '+<button>'=press button, '-<button>'=release button, '%<x axis>,<y axis>'=move L stick <x axis, y axis>, '&<x axis>,<y axis>'=move R stick <x axis, y axis> 
-    if (!strcmp(argv[0], "clickSeq"))
-    {
-        if(argc != 2)
-            return 0;
-        
-        u64 sizeArg = strlen(argv[1]) + 1;
-        #ifdef __cplusplus
-        char* seqNew = static_cast<char*>(malloc(sizeArg));
-        #else
-        char* seqNew = malloc(sizeArg);
-        #endif
-
-        strcpy(seqNew, argv[1]);
-        makeClickSeq(seqNew);
-    }
-
-    if (!strcmp(argv[0], "clickCancel"))
-        clickToken = 1;
-
-    //detachController
-    if(!strcmp(argv[0], "detachController"))
-    {
-        detachController();
-    }
-    if (!strcmp(argv[0], "game")) 
-    {
-        if (argc != 2)
-            return 0;
-        NsApplicationControlData* buf = (NsApplicationControlData*)malloc(sizeof(NsApplicationControlData));
-        u64 outsize = getoutsize(buf);
-        NacpLanguageEntry* langentry = NULL;    
-        if (outsize != 0) {
-            if (!strcmp(argv[1], "icon")) {
-                u64 i;
-                for (i = 0; i < outsize - sizeof(buf->nacp); i++)
-                {
-                    printf("%02X", buf->icon[i]);
-                }
-                printf("\n");
-            }
-            if (!strcmp(argv[1], "version"))
-            {
-                char version[0x11];
-                memset(version, 0, sizeof(version));
-                strncpy(version, buf->nacp.display_version, sizeof(version));
-                printf("%s\n", version);
-            }
-            if (!strcmp(argv[1], "rating"))
-            {
-                printf("%d\n", buf->nacp.rating_age[0]);
-            }
-            if (!strcmp(argv[1], "author"))
-            {
-                char author[0x101];
-                nacpGetLanguageEntry(&buf->nacp, &langentry);
-                memset(author, 0, sizeof(author));
-                strncpy(author, langentry->author, sizeof(author));
-                printf("%s\n", author);
-            }
-            if (!strcmp(argv[1], "name"))
-            {
-                char name[0x201];
-                nacpGetLanguageEntry(&buf->nacp, &langentry);
-                memset(name, 0, sizeof(name));
-                strncpy(name, langentry->name, sizeof(name));
-                printf("%s\n", name);
-            }
-        }
-        free(buf);
-    }
-    //configure <mainLoopSleepTime or buttonClickSleepTime> <time in ms>
-    if(!strcmp(argv[0], "configure")){
-        if(argc != 3)
-            return 0;
-
-        if(!strcmp(argv[1], "mainLoopSleepTime")){
-            u64 time = parseStringToInt(argv[2]);
-            mainLoopSleepTime = time;
-        }
-
-        if(!strcmp(argv[1], "buttonClickSleepTime")){
-            u64 time = parseStringToInt(argv[2]);
-            buttonClickSleepTime = time;
-        }
-
-        if(!strcmp(argv[1], "echoCommands")){
-            u64 shouldActivate = parseStringToInt(argv[2]);
-            echoCommands = shouldActivate != 0;
-        }
-
-        if(!strcmp(argv[1], "printDebugResultCodes")){
-            u64 shouldActivate = parseStringToInt(argv[2]);
-            debugResultCodes = shouldActivate != 0;
-        }
-        
-        if(!strcmp(argv[1], "keySleepTime")){
-            u64 keyTime = parseStringToInt(argv[2]);
-            keyPressSleepTime = keyTime;
-        }
-
-        if(!strcmp(argv[1], "fingerDiameter")){
-            u32 fDiameter = (u32) parseStringToInt(argv[2]);
-            fingerDiameter = fDiameter;
-        }
-
-        if(!strcmp(argv[1], "pollRate")){
-            u64 fPollRate = parseStringToInt(argv[2]);
-            pollRate = fPollRate;
-        }
-
-        if(!strcmp(argv[1], "freezeRate")){
-            u64 fFreezeRate = parseStringToInt(argv[2]);
-            freezeRate = fFreezeRate;
-        }
-
-        if(!strcmp(argv[1], "controllerType")){
-            detachController();
-            u8 fControllerType = (u8)parseStringToInt(argv[2]);
-            
-            #ifdef __cplusplus
-            controllerInitializedType = static_cast<HidDeviceType>(fControllerType);
-            #else
-            controllerInitializedType = fControllerType;
-            #endif
-        }
-
-        if(!strcmp(argv[1], "frameAdvanceWaitTimeNs")){
-            u32 fFrameAdvanceWaitTimeNs = (u32)parseStringToInt(argv[2]);
-            frameAdvanceWaitTimeNs = fFrameAdvanceWaitTimeNs;
-        }
-    }
-
-    if(!strcmp(argv[0], "getSystemLanguage")){
-        //thanks zaksa
-        setInitialize();
-        u64 languageCode = 0;   
-        SetLanguage language = SetLanguage_ENUS;
-        setGetSystemLanguage(&languageCode);   
-        setMakeLanguage(languageCode, &language);
-        printf("%d\n", language);
-    }
-
-    if(!strcmp(argv[0], "pixelPeek")){
-        //errors with 0x668CE, unless debugunit flag is patched
-        u64 bSize = 0x7D000;
-        #ifdef __cplusplus
-        char* buf = static_cast<char*>(malloc(bSize)); 
-        #else
-        char* buf = malloc(bSize);
-        #endif
-
-        u64 outSize = 0;
-
-        Result rc = capsscCaptureForDebug(buf, bSize, &outSize);
-
-        if (R_FAILED(rc) && debugResultCodes)
-            printf("capssc, 1204: %d\n", rc);
-        
-        u64 i;
-        for (i = 0; i < outSize; i++)
-        {
-            printf("%02X", buf[i]);
-        }
-        printf("\n");
-
-        free(buf);
-    }
-
-    if(!strcmp(argv[0], "getVersion")){
-        printf("%s\n", VERSION_S);
-    }
-	
-	// follow pointers and print absolute offset (little endian, flip it yourself if required)
-	// pointer <first (main) jump> <additional jumps> !!do not add the last jump in pointerexpr here, add it yourself!!
-	if (!strcmp(argv[0], "pointer"))
-	{
-		if(argc < 2)
-            return 0;
-		s64 jumps[argc-1];
-		for (int i = 1; i < argc; i++)
-			jumps[i-1] = parseStringToSignedLong(argv[i]);
-		u64 solved = followMainPointer(jumps, argc-1);
-		printf("%016lX\n", solved);
-	}
-
-    // pointerAll <first (main) jump> <additional jumps> <final jump in pointerexpr> 
-    // possibly redundant between the one above, one needs to go eventually. (little endian, flip it yourself if required)
-	if (!strcmp(argv[0], "pointerAll"))
-	{
-		if(argc < 3)
-            return 0;
-        s64 finalJump = parseStringToSignedLong(argv[argc-1]);
-        u64 count = argc - 2;
-		s64 jumps[count];
-		for (int i = 1; i < argc-1; i++)
-			jumps[i-1] = parseStringToSignedLong(argv[i]);
-		u64 solved = followMainPointer(jumps, count);
-        if (solved != 0)
-            solved += finalJump;
-		printf("%016lX\n", solved);
-	}
-	
-	// pointerRelative <first (main) jump> <additional jumps> <final jump in pointerexpr> 
-	// returns offset relative to heap
-	if (!strcmp(argv[0], "pointerRelative"))
-	{
-		if(argc < 3)
-            return 0;
-        s64 finalJump = parseStringToSignedLong(argv[argc-1]);
-        u64 count = argc - 2;
-		s64 jumps[count];
-		for (int i = 1; i < argc-1; i++)
-			jumps[i-1] = parseStringToSignedLong(argv[i]);
-		u64 solved = followMainPointer(jumps, count);
-        if (solved != 0)
-        {
-            solved += finalJump;
-            // MetaData meta = getMetaData();
-            u64 pid = getPID();
-            solved -= getHeapBase(pid);
-        }
-		printf("%016lX\n", solved);
-	}
-
-    // pointerPeek <amount of bytes in hex or dec> <first (main) jump> <additional jumps> <final jump in pointerexpr>
-    // warning: no validation
-    if (!strcmp(argv[0], "pointerPeek"))
-	{
-		if(argc < 4)
-            return 0;
-            
-        s64 finalJump = parseStringToSignedLong(argv[argc-1]);
-		u64 size = parseStringToInt(argv[1]);
-        u64 count = argc - 3;
-		s64 jumps[count];
-		for (int i = 2; i < argc-1; i++)
-			jumps[i-2] = parseStringToSignedLong(argv[i]);
-		u64 solved = followMainPointer(jumps, count);
-        solved += finalJump;
-        peek(solved, size);
-	}
-
-    // pointerPeekMulti <amount of bytes in hex or dec> <first (main) jump> <additional jumps> <final jump in pointerexpr> split by asterisks (*)
-    // warning: no validation
-    if (!strcmp(argv[0], "pointerPeekMulti"))
-	{
-		if(argc < 4)
-            return 0;
-
-        // we guess a max of 40 for now
-        u64 offsets[40];
-        u64 sizes[40];
-        u64 itemCount = 0;
-
-        u64 currIndex = 1;
-        u64 lastIndex = 1;
-
-        while (currIndex < argc)
-        {
-            // count first
-            char* thisArg = argv[currIndex];
-            while (strcmp(thisArg, "*"))
-            {   
-                currIndex++;
-                if (currIndex < argc)
-                    thisArg = argv[currIndex];
-                else 
-                    break;
-            }
-            
-            u64 thisCount = currIndex - lastIndex;
-            
-            s64 finalJump = parseStringToSignedLong(argv[currIndex-1]);
-            u64 size = parseStringToSignedLong(argv[lastIndex]);
-            u64 count = thisCount - 2;
-            s64 jumps[count];
-            for (int i = 1; i <= count; i++)
-                jumps[i-1] = parseStringToSignedLong(argv[i+lastIndex]);
-            u64 solved = followMainPointer(jumps, count);
-            solved += finalJump;
-
-            offsets[itemCount] = solved;
-            sizes[itemCount] = size;
-            itemCount++;
-            currIndex++;
-            lastIndex = currIndex;
-        }
-        
-        peekMulti(offsets, sizes, itemCount);
-	}
-
-    // pointerPoke <data to be sent> <first (main) jump> <additional jumps> <final jump in pointerexpr>
-    // warning: no validation
-    if (!strcmp(argv[0], "pointerPoke"))
-	{
-		if(argc < 4)
-            return 0;
-            
-        s64 finalJump = parseStringToSignedLong(argv[argc-1]);
-        u64 count = argc - 3;
-		s64 jumps[count];
-		for (int i = 2; i < argc-1; i++)
-			jumps[i-2] = parseStringToSignedLong(argv[i]);
-		u64 solved = followMainPointer(jumps, count);
-        solved += finalJump;
-
-		u64 size;
-        u8* data = parseStringToByteBuffer(argv[1], &size);
-        poke(solved, size, data);
-        free(data);
-	}
 	
     //touch followed by arrayof: <x in the range 0-1280> <y in the range 0-720>. Array is sequential taps, not different fingers. Functions in its own thread, but will not allow the call again while running. tapcount * pollRate * 2
     if (!strcmp(argv[0], "touch"))
@@ -629,107 +279,20 @@ int argmain(int argc, char **argv)
 
     if (!strcmp(argv[0], "touchCancel"))
         touchToken = 1;
-
-    //key followed by arrayof: <HidKeyboardKey> to be pressed in sequential order
-    //thank you Red (hp3721) for this functionality
-    if (!strcmp(argv[0], "key"))
-	{
-        if (argc < 2)
-            return 0;
-        
-        u64 count = argc-1;
-
-        #ifdef __cplusplus
-        HiddbgKeyboardAutoPilotState* keystates = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(count, sizeof (HiddbgKeyboardAutoPilotState)));
-        #else
-        HiddbgKeyboardAutoPilotState* keystates = calloc(count, sizeof (HiddbgKeyboardAutoPilotState));
-        #endif
-
-        u64 i;
-        for (i = 0; i < count; i++)
-        {
-            u8 key = (u8) parseStringToInt(argv[i+1]);
-            if (key < 4 || key > 231)
-                continue;
-            keystates[i].keys[key / 64] = 1UL << key;
-            keystates[i].modifiers = 1024UL; //numlock
-        }
-
-        makeKeys(keystates, count);
-    }
-
-    //keyMod followed by arrayof: <HidKeyboardKey> <HidKeyboardModifier>(without the bitfield shift) to be pressed in sequential order
-    if (!strcmp(argv[0], "keyMod"))
-	{
-        if (argc < 3 || argc % 2 == 0)
-            return 0;
-
-        u32 count = (argc-1)/2;
-        #ifdef __cplusplus
-        HiddbgKeyboardAutoPilotState* keystates = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(count, sizeof (HiddbgKeyboardAutoPilotState)));
-        #else
-        HiddbgKeyboardAutoPilotState* keystates = calloc(count, sizeof (HiddbgKeyboardAutoPilotState));
-        #endif
-
-        u64 i, j = 0;
-        for (i = 0; i < count; i++)
-        {
-            u8 key = (u8) parseStringToInt(argv[++j]);
-            if (key < 4 || key > 231)
-                continue;
-            keystates[i].keys[key / 64] = 1UL << key;
-            keystates[i].modifiers = BIT((u8) parseStringToInt(argv[++j]));
-        }
-
-        makeKeys(keystates, count);
-    }
-
-    //keyMulti followed by arrayof: <HidKeyboardKey> to be pressed at the same time.
-    if (!strcmp(argv[0], "keyMulti"))
-	{
-        if (argc < 2)
-            return 0;
-        
-        u64 count = argc-1;
-        
-        #ifdef __cplusplus
-        HiddbgKeyboardAutoPilotState* keystate = static_cast<HiddbgKeyboardAutoPilotState*>(calloc(1, sizeof (HiddbgKeyboardAutoPilotState)));
-        #else
-        HiddbgKeyboardAutoPilotState* keystate = calloc(1, sizeof (HiddbgKeyboardAutoPilotState));
-        #endif
-
-        u64 i;
-        for (i = 0; i < count; i++)
-        {
-            u8 key = (u8) parseStringToInt(argv[i+1]);
-            if (key < 4 || key > 231)
-                continue;
-            keystate[0].keys[key / 64] |= 1UL << key;
-        }
-
-        makeKeys(keystate, 1);
-    }
-    
-    if (!strcmp(argv[0], "charge"))
-	{
-        u32 charge;
-        Result rc = psmInitialize();
-        if (R_FAILED(rc))
-            fatalThrow(rc);
-        psmGetBatteryChargePercentage(&charge);
-        printf("%d\n", charge);
-        psmExit();
-    }
-
-    if (!strcmp(argv[0], "fdCount"))
-	{
-        printf("%d\n", fd_count);
-    }
     return 0;
 }
 
+*/
+
 int main()
 {
+    Result rc = viOpenDefaultDisplay(&disp);
+    if(R_FAILED(rc))
+        fatalThrow(rc);
+    rc = viGetDisplayVsyncEvent(&disp, &vsyncEvent);
+    if(R_FAILED(rc))
+        fatalThrow(rc);
+    
     char *linebuf = static_cast<char*>(malloc(sizeof(char) * MAX_LINE_LENGTH));
     pfds = static_cast<pollfd*>(malloc(sizeof *pfds * fd_size));
 
@@ -742,8 +305,6 @@ int main()
     fd_count = 1;
 
     int clientfd;
-	
-	Result rc;
 	int fr_count = 0;
 	
     initFreezes();
@@ -765,12 +326,6 @@ int main()
     rc = threadCreate(&keyboardThread, sub_key, (void*)&currentKeyEvent, NULL, THREAD_SIZE, 0x2C, -2); 
     if (R_SUCCEEDED(rc))
         rc = threadStart(&keyboardThread);
-
-    // click sequence thread
-    // mutexInit(&clickMutex);
-    // rc = threadCreate(&clickThread, sub_click, (void*)currentClick, NULL, THREAD_SIZE, 0x2C, -2); 
-    // if (R_SUCCEEDED(rc))
-    //     rc = threadStart(&clickThread);
 
     // TAS thread (culprit)
     mutexInit(&tasMutex);
@@ -821,25 +376,37 @@ int main()
                             readBytesSoFar += len;
                             if(linebuf[readBytesSoFar-1] == '\n'){
                                 // end of line
-                                linebuf[readBytesSoFar - 1] = 0;
                                 if (pfds[i].fd == clientfd)
                                 {
                                     readEnd = true;
-                                    // printf("%s\n",linebuf);
-
                                     dup2(pfds[i].fd, STDOUT_FILENO);
-
-                                    // parseArgs(linebuf, &argmain);
 
                                     try
                                     {
-                                        lua.safe_script(linebuf);
+                                        if (linebuf[0] == '-' && linebuf[1] == '-')
+                                        {
+                                            linebuf[readBytesSoFar - 1] = 0;
+                                            int offset = 2;
+                                            for (; offset < readBytesSoFar && linebuf[offset] == ' '; ++offset);
+                                            lua.safe_script_file(std::string(linebuf + offset));
+                                        }
+                                        else lua.safe_script(linebuf);
                                     }
                                     catch(const sol::error& e)
                                     {
                                         printf("%s\n", e.what());
                                     }
                                     fflush(stdout);
+
+                                    // update configure
+                                    buttonClickSleepTime = lua.get_or("clickWait", 50);
+                                    pollRate = lua.get_or("pollUpd", 17);
+                                    freezeRate = lua.get_or("freezeUpd", 3);
+                                    frameAdvanceWaitTimeNs = lua.get_or("advWait", 1e7);
+                                    fingerDiameter = lua.get_or("fingerDiameter", 50);
+                                    keyPressSleepTime = lua.get_or("keyWait", 50);
+
+                                    memset(linebuf, 0, readBytesSoFar);
                                 }
                                 else { }
                             }
@@ -852,34 +419,13 @@ int main()
 		if (fr_count == 0)
 			freeze_thr_state = Idle;
 		mutexUnlock(&freezeMutex);
-        svcSleepThread(mainLoopSleepTime * 1e+6L);
+
+        lua.set("fdCount", fd_count);
+
+        rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
+        if(R_FAILED(rc))
+            fatalThrow(rc);
     }
-	
-	if (R_SUCCEEDED(rc))
-    {
-	    freeze_thr_state = Exit;
-		threadWaitForExit(&freezeThread);
-        threadClose(&freezeThread);
-
-        currentTouchEvent.state = 3;
-        threadWaitForExit(&touchThread);
-        threadClose(&touchThread);
-
-        currentKeyEvent.state = 3;
-        threadWaitForExit(&keyboardThread);
-        threadClose(&keyboardThread);
-        
-        clickThreadState = 1;
-        threadWaitForExit(&clickThread);
-        threadClose(&clickThread);
-
-        // tasThreadState = 1;
-        // threadWaitForExit(&tasThread);
-        // threadClose(&tasThread);
-	}
-	
-	clearFreezes();
-    freeFreezes();
 	
     return 0;
 }
@@ -975,7 +521,7 @@ void sub_touch(void *arg)
         if (touchPtr->state == 1)
         {
             mutexLock(&touchMutex); // don't allow any more assignments to the touch var (will lock the main thread)
-            touch(touchPtr->states, touchPtr->sequentialCount, touchPtr->holdTime, touchPtr->hold, &touchToken);
+            touchMulti(touchPtr->states, touchPtr->sequentialCount, touchPtr->holdTime, touchPtr->hold, &touchToken);
             free(touchPtr->states);
             touchPtr->state = 0;
             mutexUnlock(&touchMutex);
@@ -1008,28 +554,6 @@ void sub_key(void *arg)
 
         if (keyPtr->state == 3)
             break;
-    }
-}
-
-void sub_click(void *arg)
-{
-    while (1)
-    {
-        if (clickThreadState == 1)
-            break;
-
-        if (currentClick != NULL)
-        {
-            mutexLock(&clickMutex);
-            clickSequence(currentClick, &clickToken);
-            free(currentClick); currentClick = NULL;
-            mutexUnlock(&clickMutex);
-            printf("done\n");
-        }
-
-        clickToken = 0;
-
-        svcSleepThread(1e+6L);
     }
 }
 

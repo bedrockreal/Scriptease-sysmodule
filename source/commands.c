@@ -33,20 +33,18 @@ u8 *workmem = NULL;
 size_t workmem_size = 0x1000;
 
 u32 frameAdvanceWaitTimeNs = 1e7;
-ViDisplay disp;
-Event vsyncEvent;
 
 void attach()
 {
     u64 pid = 0;
     Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("pmdmntGetApplicationProcessId: %d\n", rc);
 
     detach();
 
     rc = svcDebugActiveProcess(&debughandle, pid);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("svcDebugActiveProcess: %d\n", rc);
 }
 
@@ -66,22 +64,15 @@ void advanceFrames(int cnt)
 {
     s32 cur_priority;
     svcGetThreadPriority(&cur_priority, CUR_THREAD_HANDLE);
-    svcSetThreadPriority(CUR_THREAD_HANDLE, 10);
     
     u64 pid = 0;
     Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("pmdmntGetApplicationProcessId: %d\n", rc);
-
-    rc = viOpenDefaultDisplay(&disp);
-    if(R_FAILED(rc))
-        fatalThrow(rc);
-    rc = viGetDisplayVsyncEvent(&disp, &vsyncEvent);
-    if(R_FAILED(rc))
-        fatalThrow(rc);
 
     for (int i = 1; i <= cnt; ++i)
     {
+        svcSetThreadPriority(CUR_THREAD_HANDLE, 10);
         rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
         if(R_FAILED(rc))
             fatalThrow(rc);
@@ -90,21 +81,18 @@ void advanceFrames(int cnt)
         svcSleepThread(frameAdvanceWaitTimeNs);
 
         rc = svcDebugActiveProcess(&debughandle, pid);
-        if (R_FAILED(rc) && debugResultCodes)
+        if (R_FAILED(rc))
             printf("svcDebugActiveProcess: %d\n", rc);
+
+        svcSetThreadPriority(CUR_THREAD_HANDLE, cur_priority);
     }
-
-    svcSetThreadPriority(CUR_THREAD_HANDLE, cur_priority);
-
-    eventClose(&vsyncEvent);
-    viCloseDisplay(&disp);
 }
 
 u64 getPID()
 {
     u64 pid = 0;    
     Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("pmdmntGetApplicationProcessId: %d\n", rc);
     return pid;
 }
@@ -113,7 +101,7 @@ u64 getMainNsoBase(u64 pid){
     LoaderModuleInfo proc_modules[2];
     s32 numModules = 0;
     Result rc = ldrDmntGetProcessModuleInfo(pid, proc_modules, 2, &numModules);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("ldrDmntGetProcessModuleInfo: %d\n", rc);
 
     LoaderModuleInfo *proc_module = 0;
@@ -128,7 +116,7 @@ u64 getMainNsoBase(u64 pid){
 u64 getHeapBase(Handle handle){
     u64 heap_base = 0;
     Result rc = svcGetInfo(&heap_base, InfoType_HeapRegionAddress, debughandle, 0);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("svcGetInfo: %d\n", rc);
 
     return heap_base;
@@ -137,12 +125,12 @@ u64 getHeapBase(Handle handle){
 u64 getTitleId(u64 pid){
     u64 titleId = 0;
     Result rc = pminfoGetProgramId(&titleId, pid);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("pminfoGetProgramId: %d\n", rc);
     return titleId;
 }
 
-u64 GetTitleVersion(u64 pid){
+u64 getTitleVersion(u64 pid){
     u64 titleV = 0;
     s32 out;
 
@@ -152,7 +140,7 @@ u64 GetTitleVersion(u64 pid){
 
     NsApplicationContentMetaStatus *MetaStatus = malloc(sizeof(NsApplicationContentMetaStatus[100U]));
     rc = nsListApplicationContentMetaStatus(getTitleId(pid), 0, MetaStatus, 100, &out);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("nsListApplicationContentMetaStatus: %d\n", rc);
     for (int i = 0; i < out; i++) {
         if (titleV < MetaStatus[i].version) titleV = MetaStatus[i].version;
@@ -182,7 +170,7 @@ void getBuildID(u8* out, u64 pid){
     LoaderModuleInfo proc_modules[2];
     s32 numModules = 0;
     Result rc = ldrDmntGetProcessModuleInfo(pid, proc_modules, 2, &numModules);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("ldrDmntGetProcessModuleInfo: %d\n", rc);
 
     LoaderModuleInfo *proc_module = 0;
@@ -211,11 +199,11 @@ void initController()
     Result rc = hiddbgInitialize();
 	
 	//old
-    //if (R_FAILED(rc) && debugResultCodes)
+    //if (R_FAILED(rc))
     //printf("hiddbgInitialize: %d\n", rc);
     
 	//new
-	if (R_FAILED(rc) && debugResultCodes) {
+	if (R_FAILED(rc)) {
         printf("hiddbgInitialize(): 0x%x\n", rc);
     }
     else {
@@ -241,10 +229,10 @@ void initController()
     controllerState.analog_stick_r.y = -0x0;
 
     rc = hiddbgAttachHdlsWorkBuffer(&sessionId, workmem, workmem_size);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgAttachHdlsWorkBuffer: %d\n", rc);
     rc = hiddbgAttachHdlsVirtualDevice(&controllerHandle, &controllerDevice);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgAttachHdlsVirtualDevice: %d\n", rc);
     //init a dummy keyboard state for assignment between keypresses
     dummyKeyboardState.keys[3] = 0x800000000000000UL; // Hackfix found by Red: an unused key press (KBD_MEDIA_CALC) is required to allow sequential same-key presses. bitfield[3]
@@ -256,10 +244,10 @@ void detachController()
     initController();
 
     Result rc = hiddbgDetachHdlsVirtualDevice(controllerHandle);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgDetachHdlsVirtualDevice: %d\n", rc);
     rc = hiddbgReleaseHdlsWorkBuffer(sessionId);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgReleaseHdlsWorkBuffer: %d\n", rc);
     hiddbgExit();
 	free(workmem);
@@ -281,7 +269,7 @@ void poke(u64 offset, u64 size, u8* val)
 void writeMem(u64 offset, u64 size, u8* val)
 {
 	Result rc = svcWriteDebugProcessMemory(debughandle, val, offset, size);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("svcWriteDebugProcessMemory: %d\n", rc);
 }
 
@@ -362,7 +350,7 @@ void peekMulti(u64* offset, u64* size, u64 count)
 void readMem(u8* out, u64 offset, u64 size)
 {
 	Result rc = svcReadDebugProcessMemory(out, debughandle, offset, size);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("svcReadDebugProcessMemory: %d\n", rc);
 }
 
@@ -379,7 +367,7 @@ void press(HidNpadButton btn)
     initController();
     controllerState.buttons |= btn;
     Result rc = hiddbgSetHdlsState(controllerHandle, &controllerState);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgSetHdlsState: %d\n", rc);
 }
 
@@ -388,7 +376,7 @@ void release(HidNpadButton btn)
     initController();
     controllerState.buttons &= ~btn;
     Result rc = hiddbgSetHdlsState(controllerHandle, &controllerState);
-    if (R_FAILED(rc) && debugResultCodes)
+    if (R_FAILED(rc))
         printf("hiddbgSetHdlsState: %d\n", rc);
 }
 
@@ -454,7 +442,7 @@ u64 followMainPointer(s64* jumps, size_t count)
     return offset;
 }
 
-void touch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold, u8* token)
+void touchMulti(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold, u8* token)
 {
     initController();
     state->delta_time = holdTime; // only the first touch needs this for whatever reason
@@ -590,8 +578,7 @@ void clickSequence(char* seq, u8* token)
 
 void setControllerState(HidNpadButton btnState, int joy_l_x, int joy_l_y, int joy_r_x, int joy_r_y)
 {
-    printf("%lu\n", btnState);
-    if (btnState < (1 << 16)) controllerState.buttons = btnState;
+    controllerState.buttons = btnState;
     setStickState(JOYSTICK_LEFT, joy_l_x, joy_l_y);
     setStickState(JOYSTICK_RIGHT, joy_r_x, joy_r_y);
 }
@@ -615,7 +602,27 @@ void loadTAS(const char* arg)
     tasThreadState = 0;
     Result rc = threadCreate(&tasThread, sub_tas, (void*)tas_script, NULL, THREAD_SIZE, 0x2C, -2);
     if (R_SUCCEEDED(rc))
+    {
         rc = threadStart(&tasThread);
+        if (R_FAILED(rc))
+        {
+            printf("%d\n", rc);
+            return;
+        }
+        rc = threadWaitForExit(&tasThread);
+        if (R_FAILED(rc))
+        {
+            printf("%d\n", rc);
+            return;
+        }
+        rc = threadClose(&tasThread);
+        if (R_FAILED(rc))
+        {
+            printf("%d\n", rc);
+            return;
+        }
+    }
+    else printf("%d\n", rc);
 }
 
 void cancelTAS()
@@ -627,15 +634,14 @@ void cancelTAS()
 
 void screenOff()
 {
-    ViDisplay temp_display;
-    Result rc = viOpenDisplay("Internal", &temp_display);
-    if (R_FAILED(rc))
-        rc = viOpenDefaultDisplay(&temp_display);
-    if (R_SUCCEEDED(rc))
+    // ViDisplay temp_display;
+    // Result rc = viOpenDisplay("Internal", &temp_display);
+    // if (R_FAILED(rc))
+    //     rc = viOpenDefaultDisplay(&temp_display);
+    // if (R_SUCCEEDED(rc))
     {
-        rc = viSetDisplayPowerState(&temp_display, ViPowerState_NotScanning); // not scanning keeps the screen on but does not push new pixels to the display. Battery save is non-negligible and should be used where possible
+        Result rc = viSetDisplayPowerState(&disp, ViPowerState_NotScanning); // not scanning keeps the screen on but does not push new pixels to the display. Battery save is non-negligible and should be used where possible
         svcSleepThread(1e+6l);
-        viCloseDisplay(&temp_display);
 
         rc = lblInitialize();
         if (R_FAILED(rc))
@@ -647,15 +653,14 @@ void screenOff()
 
 void screenOn()
 {
-    ViDisplay temp_display;
-    Result rc = viOpenDisplay("Internal", &temp_display);
-    if (R_FAILED(rc))
-        rc = viOpenDefaultDisplay(&temp_display);
-    if (R_SUCCEEDED(rc))
+    // ViDisplay temp_display;
+    // Result rc = viOpenDisplay("Internal", &temp_display);
+    // if (R_FAILED(rc))
+    //     rc = viOpenDefaultDisplay(&temp_display);
+    // if (R_SUCCEEDED(rc))
     {
-        rc = viSetDisplayPowerState(&temp_display, ViPowerState_On);
+        Result rc = viSetDisplayPowerState(&disp, ViPowerState_On);
         svcSleepThread(1e+6l);
-        viCloseDisplay(&temp_display);
 
         rc = lblInitialize();
         if (R_FAILED(rc))
@@ -724,3 +729,16 @@ void freezeLongDouble(u64 addr, long double val)
     u64 pid = getPID();
     addToFreezeMap(addr, buf, size, getTitleId(pid));
 }
+
+u32 getBatteryChargePercentage()
+{
+    u32 charge;
+    Result rc = psmInitialize();
+    if (R_FAILED(rc))
+        fatalThrow(rc);
+    psmGetBatteryChargePercentage(&charge);
+    psmExit();
+    return charge;
+}
+
+void cancelTouch() { touchToken = 1; }

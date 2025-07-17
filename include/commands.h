@@ -14,20 +14,10 @@ extern u64 pollRate;
 extern u32 fingerDiameter;
 
 extern u32 frameAdvanceWaitTimeNs;
-extern ViDisplay disp;
-extern Event vsyncEvent;
 
 extern HiddbgHdlsSessionId sessionId;
 extern u8 *workmem;
 extern size_t workmem_size;
-
-// typedef struct {
-//     u64 main_nso_base;
-//     u64 heap_base;
-//     u64 titleID;
-//     u64 titleVersion;
-//     u8 buildID[0x20];
-// } MetaData;
 
 typedef struct {
     HidTouchState* states;
@@ -56,7 +46,7 @@ u64 getPID();
 u64 getMainNsoBase(u64 pid);
 u64 getHeapBase(Handle handle);
 u64 getTitleId(u64 pid);
-u64 GetTitleVersion(u64 pid);
+u64 getTitleVersion(u64 pid);
 void getBuildID(u8* out, u64 pid); // -> lua_getBuildID
 bool getIsProgramOpen(u64 id);
 
@@ -73,8 +63,12 @@ void resetControllerState();
 void loadTAS(const char* arg);
 void cancelTAS();
 
+void cancelTouch();
+
 void screenOff();
 void screenOn();
+
+u32 getBatteryChargePercentage();
 
 // not registered by lua
 u64 followMainPointer(s64* jumps, size_t count);
@@ -82,7 +76,8 @@ u64 getoutsize(NsApplicationControlData* buf);
 
 void setStickState(int side, int dxVal, int dyVal);
 void reverseArray(u8* arr, int start, int end);
-void touch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold, u8* token);
+// void touch(int x, int y);
+void touchMulti(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold, u8* token);
 void key(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount);
 void clickSequence(char* seq, u8* token);
 
