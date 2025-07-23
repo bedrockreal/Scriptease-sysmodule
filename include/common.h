@@ -14,13 +14,26 @@ typedef enum {
     Pause = 3
 } FreezeThreadState;
 
+typedef struct {
+    HidTouchState* states;
+    u64 sequentialCount;
+    u64 holdTime;
+    bool hold;
+    u8 state;
+} TouchData;
+
+typedef struct {
+    HiddbgKeyboardAutoPilotState* states;
+    u64 sequentialCount;
+    u8 state;
+} KeyData;
+
 extern Thread freezeThread, touchThread, keyboardThread, clickThread, tasThread;
 
 // prototype thread functions to give the illusion of cleanliness
 void sub_freeze(void *arg);
 void sub_touch(void *arg);
 void sub_key(void *arg);
-void sub_click(void *arg);
 void sub_tas(void *arg);
 
 // make utils
@@ -64,4 +77,27 @@ extern struct pollfd *pfds;
 extern ViDisplay disp;
 extern Event vsyncEvent;
 
+// Keys
 extern const char* const translate_keys[16];
+
+// commands.h
+extern Handle debughandle;
+extern bool bControllerIsInitialised;
+extern HidDeviceType controllerInitializedType;
+extern HiddbgHdlsHandle controllerHandle;
+extern HiddbgHdlsDeviceInfo controllerDevice;
+extern HiddbgHdlsState controllerState;
+extern HiddbgKeyboardAutoPilotState dummyKeyboardState;
+extern u64 buttonClickSleepTime;
+extern u64 keyPressSleepTime;
+extern u64 pollRate;
+extern u32 fingerDiameter;
+
+extern u32 frameAdvanceWaitTimeNs;
+
+extern HiddbgHdlsSessionId sessionId;
+extern u8 *workmem;
+extern size_t workmem_size;
+
+#define JOYSTICK_LEFT 0
+#define JOYSTICK_RIGHT 1

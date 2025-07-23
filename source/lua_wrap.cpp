@@ -97,6 +97,26 @@ void lua_setControllerType(u8 type)
     controllerInitializedType = static_cast<HidDeviceType>(type);
 }
 
+void lua_setClickWait(u64 clickWait) { buttonClickSleepTime = clickWait; }
+u64 lua_getClickWait() { return buttonClickSleepTime; }
+
+void lua_setPollUpd(u64 pollUpd) { pollRate = pollUpd; }
+u64 lua_getPollUpd() { return pollRate; }
+
+void lua_setAdvWait(u64 advWait) { frameAdvanceWaitTimeNs = advWait; }
+u64 lua_getAdvWait() { return frameAdvanceWaitTimeNs; }
+
+void lua_setKeyWait(u64 keyWait) { keyPressSleepTime = keyWait; }
+u64 lua_getKeyWait() { return keyPressSleepTime; }
+
+void lua_setFreezeUpd(u64 freezeUpd) { freezeRate = freezeUpd; }
+u64 lua_getFreezeUpd() { return freezeRate; }
+
+void lua_setFingerDiameter(u32 d) { fingerDiameter = d; }
+u32 lua_getFingerDiameter() { return fingerDiameter; }
+
+int lua_getFDCount() { return fd_count; }
+
 void luaInit(sol::state& lua)
 {
     lua.open_libraries(sol::lib::base, sol::lib::package, sol::lib::table, sol::lib::io, sol::lib::string, sol::lib::math);
@@ -161,6 +181,21 @@ void luaInit(sol::state& lua)
     // touch
     lua.set_function("cancelTouch", &cancelTouch);
 
+    // params
+    lua.set_function("setClickWait", &lua_setClickWait);
+    lua.set_function("getClickWait", &lua_getClickWait);
+    lua.set_function("setAdvWait", &lua_setAdvWait);
+    lua.set_function("getAdvWait", &lua_getAdvWait);
+    lua.set_function("setKeyWait", &lua_setKeyWait);
+    lua.set_function("getKeyWait", &lua_getKeyWait);
+    lua.set_function("setFingerDiameter", &lua_setFingerDiameter);
+    lua.set_function("getFingerDiameter", &lua_getFingerDiameter);
+    lua.set_function("setPollUpd", &lua_setPollUpd);
+    lua.set_function("getPollUpd", &lua_getPollUpd);
+    lua.set_function("setFreezeUpd", &lua_setFreezeUpd);
+    lua.set_function("getFreezeUpd", &lua_getFreezeUpd);
+    lua.set_function("getFDCount", &lua_getFDCount);
+
     // buttons
     for (int i = 0; i < 16; ++i)
     {
@@ -168,13 +203,4 @@ void luaInit(sol::state& lua)
     }
     lua.set("KEY_HOME", HiddbgNpadButton_Home);
     lua.set("KEY_CAPTURE", HiddbgNpadButton_Capture);
-
-    // configure
-    lua.set("clickWait", 50,
-        "fingerDiameter", 50,
-        "pollUpd", 17,
-        "freezeUpd", 3,
-        "advWait", 1e7,
-        "keyWait", 50
-    );
 }

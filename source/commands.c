@@ -65,15 +65,11 @@ void advanceFrames(int cnt)
     s32 cur_priority;
     svcGetThreadPriority(&cur_priority, CUR_THREAD_HANDLE);
     
-    u64 pid = 0;
-    Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc))
-        printf("pmdmntGetApplicationProcessId: %d\n", rc);
-
+    u64 pid = getPID();
     for (int i = 1; i <= cnt; ++i)
     {
         svcSetThreadPriority(CUR_THREAD_HANDLE, 10);
-        rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
+        Result rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
         if(R_FAILED(rc))
             fatalThrow(rc);
 

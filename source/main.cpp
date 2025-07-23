@@ -327,7 +327,7 @@ int main()
     if (R_SUCCEEDED(rc))
         rc = threadStart(&keyboardThread);
 
-    // TAS thread (culprit)
+    // TAS thread
     mutexInit(&tasMutex);
 
     sol::state lua;
@@ -336,92 +336,89 @@ int main()
 
     while (true)
     {
-        poll(pfds, fd_count, -1);
-		mutexLock(&freezeMutex);
-        for(int i = 0; i < fd_count; i++) 
+        int poll_upds = poll(pfds, fd_count, 10);
+        if (poll_upds > 0)
         {
-            if (pfds[i].revents & POLLIN) 
+            mutexLock(&freezeMutex);
+            for(int i = 0; i < fd_count; i++) 
             {
-                if (pfds[i].fd == listenfd) 
+                if (pfds[i].revents & POLLIN) 
                 {
-                    clientfd = accept(listenfd, (struct sockaddr *)&client, (socklen_t *)&c);
-                    if(clientfd != -1)
+                    if (pfds[i].fd == listenfd) 
                     {
-                        add_to_pfds(&pfds, clientfd, &fd_count, &fd_size);
-                    }
-                    else{
-                        svcSleepThread(1e+9L);
-                        close(listenfd);
-                        listenfd = setupServerSocket(6000);
-                        pfds[0].fd = listenfd;
-                        pfds[0].events = POLLIN;
-                        break;
-                    }
-                }
-                else
-                {
-                    bool readEnd = false;
-                    int readBytesSoFar = 0;
-                    while(!readEnd){
-                        int len = read(pfds[i].fd, &linebuf[readBytesSoFar], 1);
-                        if(len <= 0)
+                        clientfd = accept(listenfd, (struct sockaddr *)&client, (socklen_t *)&c);
+                        if(clientfd != -1)
                         {
-                            // end of input
-                            close(pfds[i].fd);
-                            del_from_pfds(pfds, i, &fd_count);
-                            readEnd = true;
+                            add_to_pfds(&pfds, clientfd, &fd_count, &fd_size);
                         }
-                        else
-                        {
-                            readBytesSoFar += len;
-                            if(linebuf[readBytesSoFar-1] == '\n'){
-                                // end of line
-                                if (pfds[i].fd == clientfd)
-                                {
-                                    readEnd = true;
-                                    dup2(pfds[i].fd, STDOUT_FILENO);
-
-                                    try
+                        else{
+                            svcSleepThread(1e+9L);
+                            close(listenfd);
+                            listenfd = setupServerSocket(6000);
+                            pfds[0].fd = listenfd;
+                            pfds[0].events = POLLIN;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        bool readEnd = false;
+                        int readBytesSoFar = 0;
+                        while(!readEnd){
+                            int len = read(pfds[i].fd, &linebuf[readBytesSoFar], 1);
+                            if(len <= 0)
+                            {
+                                // end of input
+                                close(pfds[i].fd);
+                                del_from_pfds(pfds, i, &fd_count);
+                                readEnd = true;
+                            }
+                            else
+                            {
+                                readBytesSoFar += len;
+                                if(linebuf[readBytesSoFar-1] == '\n'){
+                                    // end of line
+                                    if (pfds[i].fd == clientfd)
                                     {
-                                        if (linebuf[0] == '-' && linebuf[1] == '-')
+                                        readEnd = true;
+                                        dup2(pfds[i].fd, STDOUT_FILENO);
+
+                                        // u64 start_ns = armTicksToNs(armGetSystemTick());
+                                        try
                                         {
-                                            linebuf[readBytesSoFar - 1] = 0;
-                                            int offset = 2;
-                                            for (; offset < readBytesSoFar && linebuf[offset] == ' '; ++offset);
-                                            lua.safe_script_file(std::string(linebuf + offset));
+                                            if (linebuf[0] == '-' && linebuf[1] == '-')
+                                            {
+                                                linebuf[readBytesSoFar - 1] = 0;
+                                                int offset = 2;
+                                                for (; offset < readBytesSoFar && linebuf[offset] == ' '; ++offset);
+                                                lua.safe_script_file(std::string(linebuf + offset));
+                                            }
+                                            else lua.safe_script(linebuf);
                                         }
-                                        else lua.safe_script(linebuf);
-                                    }
-                                    catch(const sol::error& e)
-                                    {
-                                        printf("%s\n", e.what());
-                                    }
-                                    fflush(stdout);
+                                        catch(const sol::error& e)
+                                        {
+                                            printf("%s\n", e.what());
+                                        }
+                                        // u64 end_ns = armTicksToNs(armGetSystemTick());
+                                        // printf("%.6lf\n", (end_ns - start_ns) / 1e6);
 
-                                    // update configure
-                                    buttonClickSleepTime = lua.get_or("clickWait", 50);
-                                    pollRate = lua.get_or("pollUpd", 17);
-                                    freezeRate = lua.get_or("freezeUpd", 3);
-                                    frameAdvanceWaitTimeNs = lua.get_or("advWait", 1e7);
-                                    fingerDiameter = lua.get_or("fingerDiameter", 50);
-                                    keyPressSleepTime = lua.get_or("keyWait", 50);
-
-                                    memset(linebuf, 0, readBytesSoFar);
+                                        fflush(stdout);
+                                        memset(linebuf, 0, readBytesSoFar);
+                                    }
+                                    else { }
                                 }
-                                else { }
                             }
                         }
                     }
                 }
             }
+
+            fr_count = getFreezeCount();
+            if (fr_count == 0)
+                freeze_thr_state = Idle;
+            mutexUnlock(&freezeMutex);
         }
-		fr_count = getFreezeCount();
-		if (fr_count == 0)
-			freeze_thr_state = Idle;
-		mutexUnlock(&freezeMutex);
-
-        lua.set("fdCount", fd_count);
-
+		
         rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
         if(R_FAILED(rc))
             fatalThrow(rc);
