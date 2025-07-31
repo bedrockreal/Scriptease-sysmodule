@@ -1,12 +1,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
-#include <sys/errno.h>
-#include <arpa/inet.h>
 #include <unistd.h>
-#include <switch.h>
+
 #include "freeze.h"
+#include "meta.h"
 
 FreezeBlock* freezes;
 
@@ -92,4 +90,64 @@ u8 clearFreezes(void)
 		}
 	}
 	return clearedOne;
+}
+
+void freezeShort(u64 addr, s16 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeInt(u64 addr, s32 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeLongLong(u64 addr, s64 val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeFloat(u64 addr, float val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeDouble(u64 addr, double val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
+}
+
+void freezeLongDouble(u64 addr, long double val)
+{
+    u8 size = sizeof(val);
+    u8* buf = malloc(size);
+    memcpy(buf, &val, size);
+
+    u64 pid = getPID();
+    addToFreezeMap(addr, buf, size, getTitleId(pid));
 }

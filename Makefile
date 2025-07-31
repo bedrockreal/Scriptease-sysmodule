@@ -89,7 +89,7 @@ clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).npdm $(TARGET).nso $(TARGET).elf sd
 
-export PROGRAM_ID := 430000000000000B
+export PROGRAM_ID := 430000000000000D
 
 sd: $(BUILD) $(OUTPUT).nsp
 	@echo writing output to sd/ ...

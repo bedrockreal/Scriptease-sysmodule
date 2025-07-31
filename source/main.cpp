@@ -1,7 +1,6 @@
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "control.hpp"
 
+extern "C" {
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,32 +11,32 @@ extern "C" {
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
-#include <poll.h>
 #include <errno.h>
 
-#include "commands.h"
-#include "args.h"
+#include "misc.h"
 #include "util.h"
 #include "freeze.h"
 #include "common.h"
+#include "meta.h"
+#include "mem.h"
 
-Thread freezeThread, touchThread, keyboardThread, clickThread, tasThread;
-FILE* tas_script = NULL;
+#define TITLE_ID 0x430000000000000D
+#define HEAP_SIZE 0x00400000
+#define THREAD_SIZE 0x1A000
+#define VERSION_S "2.4"
+
+Thread freezeThread, touchThread;
 
 // locks for thread
-Mutex freezeMutex, touchMutex, keyMutex, clickMutex, tasMutex;
+Mutex freezeMutex, touchMutex;
 
 // events for releasing or idling threads
 FreezeThreadState freeze_thr_state = Active; 
-u8 clickThreadState = 0, tasThreadState = 0; // 1 = break thread
 // key and touch events currently being processed
-KeyData currentKeyEvent = {0};
 TouchData currentTouchEvent = {0};
-char* currentClick = NULL;
 
 // for cancelling the touch/click thread
 u8 touchToken = 0;
-u8 clickToken = 0;
 
 // fd counters and max size
 int fd_count = 0;
@@ -45,10 +44,6 @@ int fd_size = 5;
 
 // we aren't an applet
 u32 __nx_applet_type = AppletType_None;
-
-// Needed for TAS
-int prev_frame = 0;
-int line_cnt = 0;
 
 u64 freezeRate = 3;
 
@@ -73,9 +68,8 @@ void __appInit(void)
 {
     Result rc;
     svcSleepThread(20000000000L);
-    rc = smInitialize();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
+    R_ASSERT(smInitialize());
+
     if (hosversionGet() == 0) {
         rc = setsysInitialize();
         if (R_SUCCEEDED(rc)) {
@@ -86,33 +80,15 @@ void __appInit(void)
             setsysExit();
         }
     }
-    rc = pmdmntInitialize();
-	if (R_FAILED(rc)) 
-        fatalThrow(rc);
-    rc = ldrDmntInitialize();
-	if (R_FAILED(rc)) 
-		fatalThrow(rc);
-    rc = pminfoInitialize();
-	if (R_FAILED(rc)) 
-		fatalThrow(rc);
-    rc = socketInitializeDefault();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
-    rc = capsscInitialize();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
-    rc = viInitialize(ViServiceType_System);
-    if (R_FAILED(rc))
-        fatalThrow(rc);
 
-    // adopted from usb-botbase
-    rc = fsInitialize();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
-
-    rc = fsdevMountSdmc();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
+    R_ASSERT(pmdmntInitialize());
+    R_ASSERT(ldrDmntInitialize());
+    R_ASSERT(pminfoInitialize());
+    R_ASSERT(socketInitializeDefault());
+    R_ASSERT(viInitialize(ViServiceType_System));
+    R_ASSERT(fsInitialize());
+    R_ASSERT(fsdevMountSdmc());
+    R_ASSERT(hiddbgInitialize());
 }
 
 void __attribute__((weak)) userAppExit(void);
@@ -128,14 +104,6 @@ void __appExit(void)
         currentTouchEvent.state = 3;
         threadWaitForExit(&touchThread);
         threadClose(&touchThread);
-
-        currentKeyEvent.state = 3;
-        threadWaitForExit(&keyboardThread);
-        threadClose(&keyboardThread);
-        
-        clickThreadState = 1;
-        threadWaitForExit(&clickThread);
-        threadClose(&clickThread);
 	}
 	
 	clearFreezes();
@@ -152,146 +120,21 @@ void __appExit(void)
 
     fsExit();
     fsdevUnmountAll();
+    hiddbgExit();
 }
 
-void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
-{
-    if (*fd_count == *fd_size) {
-        *fd_size *= 2;
-
-        *pfds = static_cast<pollfd*>(realloc(*pfds, sizeof(**pfds) * (*fd_size)));
-    }
-
-    (*pfds)[*fd_count].fd = newfd;
-    (*pfds)[*fd_count].events = POLLIN;
-
-    (*fd_count)++;
-}
-
-void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
-{
-    pfds[i] = pfds[*fd_count-1];
-
-    (*fd_count)--;
-}
-
-void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold)
-{
-    mutexLock(&touchMutex);
-    memset(&currentTouchEvent, 0, sizeof currentTouchEvent);
-    currentTouchEvent.states = state;
-    currentTouchEvent.sequentialCount = sequentialCount;
-    currentTouchEvent.holdTime = holdTime;
-    currentTouchEvent.hold = hold;
-    currentTouchEvent.state = 1;
-    mutexUnlock(&touchMutex);
-}
-
-void makeKeys(HiddbgKeyboardAutoPilotState* states, u64 sequentialCount)
-{
-    mutexLock(&keyMutex);
-    memset(&currentKeyEvent, 0, sizeof currentKeyEvent);
-    currentKeyEvent.states = states;
-    currentKeyEvent.sequentialCount = sequentialCount;
-    currentKeyEvent.state = 1;
-    mutexUnlock(&keyMutex);
-}
-
-#ifdef __cplusplus
+void sub_freeze(void *arg);
+void sub_touch(void *arg);
 }
 
 #include "lua_wrap.hpp"
-#endif
 
-/*
-int argmain(int argc, char **argv)
-{
-    if (argc == 0)
-        return 0;
-	
-    //touch followed by arrayof: <x in the range 0-1280> <y in the range 0-720>. Array is sequential taps, not different fingers. Functions in its own thread, but will not allow the call again while running. tapcount * pollRate * 2
-    if (!strcmp(argv[0], "touch"))
-	{
-        if(argc < 3 || argc % 2 == 0)
-            return 0;
-
-        u32 count = (argc-1)/2;
-		
-        #ifdef __cplusplus
-        HidTouchState* state = static_cast<HidTouchState*>(calloc(count, sizeof(HidTouchState)));
-        #else
-        HidTouchState* state = calloc(count, sizeof(HidTouchState));
-        #endif
-
-        u32 i, j = 0;
-        for (i = 0; i < count; ++i)
-        {
-            state[i].diameter_x = state[i].diameter_y = fingerDiameter;
-            state[i].x = (u32) parseStringToInt(argv[++j]);
-            state[i].y = (u32) parseStringToInt(argv[++j]);
-        }
-
-        makeTouch(state, count, pollRate * 1e+6L, false);
-	}
-
-    //touchHold <x in the range 0-1280> <y in the range 0-720> <time in milliseconds (must be at least 15ms)>. Functions in its own thread, but will not allow the call again while running. pollRate + holdtime
-    if(!strcmp(argv[0], "touchHold")){
-        if(argc != 4)
-            return 0;
-
-        #ifdef __cplusplus
-        HidTouchState* state = static_cast<HidTouchState*>(calloc(1, sizeof(HidTouchState)));
-        #else
-        HidTouchState* state = calloc(1, sizeof(HidTouchState));
-        #endif
-
-        state->diameter_x = state->diameter_y = fingerDiameter;
-        state->x = (u32) parseStringToInt(argv[1]);
-        state->y = (u32) parseStringToInt(argv[2]);
-        u64 time = parseStringToInt(argv[3]);
-        makeTouch(state, 1, time * 1e+6L, false);
-    }
-
-    //touchDraw followed by arrayof: <x in the range 0-1280> <y in the range 0-720>. Array is vectors of where finger moves to, then removes the finger. Functions in its own thread, but will not allow the call again while running. (vectorcount * pollRate * 2) + pollRate
-    if (!strcmp(argv[0], "touchDraw"))
-	{
-        if(argc < 3 || argc % 2 == 0)
-            return 0;
-
-        u32 count = (argc-1)/2;
-		
-        #ifdef __cplusplus
-        HidTouchState* state = static_cast<HidTouchState*>(calloc(count, sizeof(HidTouchState)));
-        #else
-        HidTouchState* state = calloc(count, sizeof(HidTouchState));
-        #endif
-
-        u32 i, j = 0;
-        for (i = 0; i < count; ++i)
-        {
-            state[i].diameter_x = state[i].diameter_y = fingerDiameter;
-            state[i].x = (u32) parseStringToInt(argv[++j]);
-            state[i].y = (u32) parseStringToInt(argv[++j]);
-        }
-
-        makeTouch(state, count, pollRate * 1e+6L * 2, true);
-	}
-
-    if (!strcmp(argv[0], "touchCancel"))
-        touchToken = 1;
-    return 0;
-}
-
-*/
+std::vector<bot> bots;
 
 int main()
 {
-    Result rc = viOpenDefaultDisplay(&disp);
-    if(R_FAILED(rc))
-        fatalThrow(rc);
-    rc = viGetDisplayVsyncEvent(&disp, &vsyncEvent);
-    if(R_FAILED(rc))
-        fatalThrow(rc);
+    R_ASSERT(viOpenDefaultDisplay(&disp));
+    R_ASSERT(viGetDisplayVsyncEvent(&disp, &vsyncEvent));
     
     char *linebuf = static_cast<char*>(malloc(sizeof(char) * MAX_LINE_LENGTH));
     pfds = static_cast<pollfd*>(malloc(sizeof *pfds * fd_size));
@@ -311,7 +154,7 @@ int main()
 
 	// freeze thread
 	mutexInit(&freezeMutex);
-	rc = threadCreate(&freezeThread, sub_freeze, (void*)&freeze_thr_state, NULL, THREAD_SIZE, 0x2C, -2); 
+	Result rc = threadCreate(&freezeThread, sub_freeze, (void*)&freeze_thr_state, NULL, THREAD_SIZE, 0x2C, -2); 
 	if (R_SUCCEEDED(rc))
         rc = threadStart(&freezeThread);
 
@@ -320,15 +163,6 @@ int main()
     rc = threadCreate(&touchThread, sub_touch, (void*)&currentTouchEvent, NULL, THREAD_SIZE, 0x2C, -2); 
     if (R_SUCCEEDED(rc))
         rc = threadStart(&touchThread);
-
-    // key thread
-    mutexInit(&keyMutex);
-    rc = threadCreate(&keyboardThread, sub_key, (void*)&currentKeyEvent, NULL, THREAD_SIZE, 0x2C, -2); 
-    if (R_SUCCEEDED(rc))
-        rc = threadStart(&keyboardThread);
-
-    // TAS thread
-    mutexInit(&tasMutex);
 
     sol::state lua;
     luaInit(lua);
@@ -402,6 +236,8 @@ int main()
                                         // u64 end_ns = armTicksToNs(armGetSystemTick());
                                         // printf("%.6lf\n", (end_ns - start_ns) / 1e6);
 
+                                        printf("%lu\n", bots.size());
+
                                         fflush(stdout);
                                         memset(linebuf, 0, readBytesSoFar);
                                     }
@@ -412,18 +248,22 @@ int main()
                     }
                 }
             }
-
-            fr_count = getFreezeCount();
-            if (fr_count == 0)
-                freeze_thr_state = Idle;
-            mutexUnlock(&freezeMutex);
         }
+
+		if (!getIsPaused())
+		{
+			for (int i = 0; i < bots.size(); ++i) bots[i].updateScript();
+		}
+
+        fr_count = getFreezeCount();
+        if (fr_count == 0)
+            freeze_thr_state = Idle;
+        mutexUnlock(&freezeMutex);
 		
-        rc = eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
-        if(R_FAILED(rc))
-            fatalThrow(rc);
+        R_ASSERT(eventWait(&vsyncEvent, 0xFFFFFFFFFFF));
     }
 	
+    bots.clear();
     return 0;
 }
 
@@ -531,54 +371,4 @@ void sub_touch(void *arg)
         if (touchPtr->state == 3)
             break;
     }
-}
-
-void sub_key(void *arg)
-{
-    while (1)
-    {
-        KeyData* keyPtr = (KeyData*)arg;
-        if (keyPtr->state == 1)
-        {
-            mutexLock(&keyMutex); 
-            key(keyPtr->states, keyPtr->sequentialCount);
-            free(keyPtr->states);
-            keyPtr->state = 0;
-            mutexUnlock(&keyMutex);
-        }
-
-        svcSleepThread(1e+6L);
-
-        if (keyPtr->state == 3)
-            break;
-    }
-}
-
-void sub_tas(void *arg)
-{
-    if (tas_script == NULL) return;
-    if (!getIsPaused()) attach();
-
-    prev_frame = 0;
-    constexpr int NXTAS_MAX_LINE_LEN = 256;
-    char line[NXTAS_MAX_LINE_LEN];
-    int line_cnt = 0;
-
-    while (fgets(line, NXTAS_MAX_LINE_LEN, tas_script) != NULL)
-    {
-        int ret = parseArgs(line, &parseNxTasStr);
-        if (ret != 0)
-        {
-            printf("Error parsing line %d\n", line_cnt);
-            printf("%s\n", line);
-            detach();
-            break;
-        }
-        line_cnt++;
-
-        if (tasThreadState == 1) break;
-    }
-    fclose(tas_script);
-    tas_script = NULL;
-    resetControllerState();
 }

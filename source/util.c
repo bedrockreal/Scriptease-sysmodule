@@ -5,9 +5,9 @@
 #include <sys/errno.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <switch.h>
+#include <stdbool.h>
 #include "util.h"
-#include "commands.h"
+#include "misc.h"
 #include "common.h"
 
 const char* const translate_keys[16] =
@@ -95,75 +95,6 @@ int setupServerSocket(int port)
     return lissock;
 }
 
-u64 parseStringToInt(char* arg){
-    if(strlen(arg) > 2){
-        if(arg[1] == 'x'){
-            u64 ret = strtoul(arg, NULL, 16);
-            return ret;
-        }
-    }
-    u64 ret = strtoul(arg, NULL, 10);
-    return ret;
-}
-
-s64 parseStringToSignedLong(char* arg){
-    if(strlen(arg) > 2){
-        if(arg[1] == 'x' || arg[2] == 'x'){
-            s64 ret = strtol(arg, NULL, 16);
-            return ret;
-        }
-    }
-    s64 ret = strtol(arg, NULL, 10);
-    return ret;
-}
-
-u8* parseStringToByteBuffer(char* arg, u64* size)
-{
-    char toTranslate[3] = {0};
-    int length = strlen(arg);
-    bool isHex = false;
-
-    if(length > 2){
-        if(arg[1] == 'x'){
-            isHex = true;
-            length -= 2;
-            arg = &arg[2]; //cut off 0x
-        }
-    }
-
-    bool isFirst = true;
-    bool isOdd = (length % 2 == 1);
-    u64 bufferSize = length / 2;
-    if(isOdd) bufferSize++;
-    u8 *buffer = malloc(bufferSize);
-
-
-
-    u64 i;
-    for (i = 0; i < bufferSize; i++){
-        if(isOdd){
-            if(isFirst){
-                toTranslate[0] = '0';
-                toTranslate[1] = arg[i];
-            }else{
-                toTranslate[0] = arg[(2 * i) - 1];
-                toTranslate[1] = arg[(2 * i)];
-            }
-        }else{
-            toTranslate[0] = arg[i*2];
-            toTranslate[1] = arg[(i*2) + 1];      
-        }
-        isFirst = false;
-        if(isHex){
-            buffer[i] = strtoul(toTranslate, NULL, 16);
-        }else{
-            buffer[i] = strtoul(toTranslate, NULL, 10);
-        }
-    }
-    *size = bufferSize;
-    return buffer;
-}
-
 HidNpadButton parseStringToButton(char* arg)
 {
     for (int i = 0; i < 16; ++i)
@@ -218,52 +149,54 @@ static void sendPatternStatic(const HidsysNotificationLedPattern* pattern, const
 
 void flashLed()
 {
-    Result rc = hidsysInitialize();
-    if (R_FAILED(rc))
-        fatalThrow(rc);
+    R_ASSERT(hidsysInitialize());
     sendPatternStatic(&breathingpattern, HidNpadIdType_Handheld); // glow in and out x2 for docked joycons
     sendPatternStatic(&flashpattern, HidNpadIdType_No1); // big hard single glow for wireless/wired joycons or controllers
     hidsysExit();
 }
 
-int parseNxTasStr(int argc, char **argv)
+void add_to_pfds(struct pollfd *pfds[], int newfd, int *fd_count, int *fd_size)
 {
-    // size of ret should be 4
-    // return 0 if success
-    // at first, prev_frame = 0
+    if (*fd_count == *fd_size) {
+        *fd_size *= 2;
 
-    if (argc != 4) return 1;
-    int cur_frame = strtol(argv[0], NULL, 0);
-    if (cur_frame > prev_frame) advanceFrames(cur_frame - prev_frame);
-
-    char *ptr = NULL;
-    u64 btnState = 0;
-    if (strcmp(argv[1], "NONE"))
-    {
-        ptr = strtok(argv[1], ";");
-        while (ptr != NULL)
-        {
-            btnState |= (s32) parseStringToButton(ptr);
-            ptr = strtok(NULL, ";");
-        }
+        *pfds = realloc(*pfds, sizeof(**pfds) * (*fd_size));
     }
 
-    int stickPos[2][2];
-    for (int i = 0; i < 2; ++i)
-    {
-        ptr = strtok(argv[2 + i], ";");
-        for (int j = 0; j < 2; ++j)
-        {
-            if (ptr == NULL) return 1;
-            stickPos[i][j] = strtol(ptr, NULL, 0);
-            ptr = strtok(NULL, ";");
-        }
-    }
+    (*pfds)[*fd_count].fd = newfd;
+    (*pfds)[*fd_count].events = POLLIN;
 
-    setControllerState(btnState, stickPos[0][0], stickPos[0][1], stickPos[1][0], stickPos[1][1]);
-    advanceFrames(1);
-    resetControllerState();
-    prev_frame = cur_frame + 1;
-
-    return 0;
+    (*fd_count)++;
 }
+
+void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
+{
+    pfds[i] = pfds[*fd_count-1];
+
+    (*fd_count)--;
+}
+
+void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold)
+{
+    // mutexLock(&touchMutex);
+    // memset(&currentTouchEvent, 0, sizeof currentTouchEvent);
+    // currentTouchEvent.states = state;
+    // currentTouchEvent.sequentialCount = sequentialCount;
+    // currentTouchEvent.holdTime = holdTime;
+    // currentTouchEvent.hold = hold;
+    // currentTouchEvent.state = 1;
+    // mutexUnlock(&touchMutex);
+}
+
+void reverseArray(u8* arr, int start, int end)
+{
+    int temp;
+    while (start < end)
+    {
+        temp = arr[start];   
+        arr[start] = arr[end];
+        arr[end] = temp;
+        start++;
+        end--;
+    }   
+} 
