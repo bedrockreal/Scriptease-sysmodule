@@ -29,6 +29,9 @@ struct TAS
     bool readLine();
     void kill();
     bool isActive();
+
+    private:
+    void init();
 };
 
 std::array<int, 6> parseNxTasStr(char *str);

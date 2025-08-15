@@ -12,27 +12,27 @@ extern "C"
 
 #include "control.hpp"
 
-extern std::vector<bot> bots;
+// extern std::vector<bot> bots;
 
-
-TAS::TAS()
-{
-    file = NULL;
-    line_cnt = 1;
-    frame_counter = 0;
-}
-
+TAS::TAS() { init(); }
 TAS::~TAS() {kill(); }
 
 void TAS::load(std::string file_name, bool auto_run)
 {
+    if (isActive())
+    {
+        printf("TAS::isActive() == true\n");
+        return;
+    }
+
+    init();
     file = fopen(file_name.c_str(), "r");
     if (!file)
     {
         printf("Error opening file : %d (%s)\n", errno, strerror(errno));
     }
     is_paused = !auto_run;
-    if (!readLine()) kill();
+    if (readLine()) kill();
 }
 
 bool TAS::readLine()
@@ -44,7 +44,7 @@ bool TAS::readLine()
     if (nxt_line[0] == -1)
     {
         printf("Error parsing line %d\n", line_cnt);
-        printf("%s\n", line);
+        printf("Note: %s\n", line);
         return 1;
     }
     ++line_cnt;
@@ -53,14 +53,23 @@ bool TAS::readLine()
 
 void TAS::kill()
 {
+    printf("kill TAS\n");
     if (file)
     {
         fclose(file);
         file = NULL;
     }
+    else printf("file == NULL\n");
 }
 
 bool TAS::isActive() { return (file != NULL); }
+
+void TAS::init()
+{
+    file = NULL;
+    line_cnt = 1;
+    frame_counter = 0;
+}
 
 u32 frame_advance_wait_time_ns = 1e7;
 
@@ -124,22 +133,16 @@ std::array<int, 6> parseNxTasStr(char *str)
 
 void attach()
 {
-    u64 pid = 0;
-    Result rc = pmdmntGetApplicationProcessId(&pid);
-    if (R_FAILED(rc))
-        printf("pmdmntGetApplicationProcessId: %d\n", rc);
-
-    detach();
-
-    rc = svcDebugActiveProcess(&debughandle, pid);
-    if (R_FAILED(rc))
-        printf("svcDebugActiveProcess: %d\n", rc);
+    if (getIsPaused()) return;
+    u64 pid = getPID();
+    R_DEBUG(svcDebugActiveProcess(&debughandle, pid));
 }
 
 void detach(){
     if (getIsPaused())
     {
         svcCloseHandle(debughandle);
+        debughandle = 0;
     }
 }
 
@@ -160,10 +163,7 @@ void advanceFrames(const int cnt)
 
         svcCloseHandle(debughandle);
         svcSleepThread(frame_advance_wait_time_ns);
-
-        Result rc = svcDebugActiveProcess(&debughandle, pid);
-        if (R_FAILED(rc))
-            printf("svcDebugActiveProcess: %d\n", rc);
+        R_DEBUG(svcDebugActiveProcess(&debughandle, pid));
 
         svcSetThreadPriority(CUR_THREAD_HANDLE, cur_priority);
     }

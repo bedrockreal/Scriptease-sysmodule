@@ -1,3 +1,5 @@
+#define SOL_ALL_SAFETIES_ON 1
+
 #include "lua_wrap.hpp"
 #include "control.hpp"
 
@@ -7,14 +9,16 @@
 extern "C"
 {
     #include <switch.h>
-    #include "misc.h"
     #include "common.h"
     #include "freeze.h"
     #include "meta.h"
     #include "mem.h"
+    #include "util.h"
 
     extern const char* const translate_keys[16];
 }
+
+extern FreezeThreadState freeze_thr_state;
 
 std::vector<u8> lua_peek(u64 offset, u64 size)
 {
@@ -62,19 +66,12 @@ std::vector<u8> lua_capScreen()
 
     size_t buf_size = 0x80000;
     std::vector<u8> buf(buf_size);
-    u64 out_size;
-    rc = capsscCaptureJpegScreenShot(&out_size, &buf[0], buf_size, ViLayerStack_Default, 2e9);
-    if (R_FAILED(rc))
-        printf("capsscCaptureJpegScreenShot: %d\n", rc);
+    u64 out_size = 0;
+    R_DEBUG(capsscCaptureJpegScreenShot(&out_size, &buf[0], buf_size, ViLayerStack_Default, 2e9));
 
     buf.resize(out_size);
     capsscExit();
     return buf;
-}
-
-void lua_setTouchState(std::vector<u32> X, std::vector<u32> Y)
-{
-    // pass
 }
 
 void lua_setClickWait(u64 clickWait) { bot::button_click_sleep_time = clickWait; }
@@ -83,13 +80,19 @@ u64 lua_getClickWait() { return bot::button_click_sleep_time; }
 void lua_setAdvWait(u64 advWait) { frame_advance_wait_time_ns = advWait; }
 u64 lua_getAdvWait() { return frame_advance_wait_time_ns; }
 
-void lua_setFreezeUpd(u64 freezeUpd) { freezeRate = freezeUpd; }
-u64 lua_getFreezeUpd() { return freezeRate; }
-
-void lua_setFingerDiameter(u32 d) { fingerDiameter = d; }
-u32 lua_getFingerDiameter() { return fingerDiameter; }
+void lua_setFreezeUpd(u64 freezeUpd) { freeze_rate = freezeUpd; }
+u64 lua_getFreezeUpd() { return freeze_rate; }
 
 int lua_getFDCount() { return fd_count; }
+
+template <class T>
+std::vector<u8> lua_getBytes(T x)
+{
+    u8 size = sizeof(x);
+    std::vector<u8> buf(size);
+    memcpy(&buf[0], &x, size);
+    return buf;
+}
 
 void luaInit(sol::state& lua)
 {
@@ -97,10 +100,12 @@ void luaInit(sol::state& lua)
 
     // register types
     // call new() using dots, colons otherwise; will crash otherwise
-    sol::usertype tas_type = lua.new_usertype<TAS>(
-        "TAS", sol::constructors<TAS()>()
-    );
-    tas_type["load"] = &TAS::load;
+    // sol::usertype tas_type = lua.new_usertype<TAS>(
+    //     "TAS", sol::constructors<TAS()>(),
+    //     "is_paused", &TAS::is_paused,
+    //     "isActive", &TAS::isActive,
+    //     "load", &TAS::load
+    // );
 
     sol::usertype bot_type = lua.new_usertype<bot>(
         "bot", sol::constructors<bot(), bot(int)>()
@@ -112,7 +117,12 @@ void luaInit(sol::state& lua)
     bot_type["resetState"] = &bot::resetState;
     bot_type["getType"] = &bot::getType;
     bot_type["getHandle"] = &bot::getHandle;
-    bot_type["getSessionId"] = &bot::getSessionId;
+
+    bot_type["loadScript"] = &bot::loadScript;
+    bot_type["stopScript"] = &bot::stopScript;
+    bot_type["resumeScript"] = &bot::resumeScript;
+    bot_type["killScript"] = &bot::killScript;
+    bot_type["reconnect"] = &bot::reconnect;
 
     // controller
     lua.set("bots", &bots);
@@ -137,46 +147,28 @@ void luaInit(sol::state& lua)
     lua.set_function("getIsProgramOpen", &getIsProgramOpen);
     lua.set_function("capScreen", &lua_capScreen);
 
+    lua.set_function("getBytesShort", &lua_getBytes<s16>);
+    lua.set_function("getBytesInt", &lua_getBytes<s32>);
+    lua.set_function("getBytesLongLong", &lua_getBytes<s64>);
+    lua.set_function("getBytesFloat", &lua_getBytes<float>);
+    lua.set_function("getBytesDouble", &lua_getBytes<double>);
+    lua.set_function("getBytesLongDouble", &lua_getBytes<long double>);
+
     // freeze
-    lua.set_function("freezeHD", &freezeShort);
-    lua.set_function("freezeD", &freezeInt);
-    lua.set_function("freezeLL", &freezeLongLong);
-    lua.set_function("freezeF", &freezeFloat);
-    lua.set_function("freezeLF", &freezeDouble);
-    lua.set_function("freezeLLF", &freezeLongDouble);
     lua.set_function("unfreeze", &removeFromFreezeMap);
     lua.set_function("getFreezeCount", &getFreezeCount);
     lua.set_function("clearFreezes", &lua_clearFreezes);
     lua.set_function("pauseFreezes", &lua_pauseFreezes);
     lua.set_function("unpauseFreezes", &lua_unpauseFreezes);
 
-    // touch
-    lua.set_function("cancelTouch", &cancelTouch);
-
     // params
     lua.set_function("setClickWait", &lua_setClickWait);
     lua.set_function("getClickWait", &lua_getClickWait);
     lua.set_function("setAdvWait", &lua_setAdvWait);
     lua.set_function("getAdvWait", &lua_getAdvWait);
-    lua.set_function("setFingerDiameter", &lua_setFingerDiameter);
-    lua.set_function("getFingerDiameter", &lua_getFingerDiameter);
     lua.set_function("setFreezeUpd", &lua_setFreezeUpd);
     lua.set_function("getFreezeUpd", &lua_getFreezeUpd);
     lua.set_function("getFDCount", &lua_getFDCount);
-
-    // lua.set_function("dumpHdls", []()
-    // {
-    //     HiddbgHdlsStateList state_list;
-    //     hiddbgDumpHdlsStates(bots[0].session_id, &state_list);
-    //     printf("Total entries: %d\n", state_list.total_entries);
-    //     printf("Pad: %u\n", state_list.pad);
-    //     for (int i = 0; i < state_list.total_entries; ++i)
-    //     {
-    //         printf("Controller #%d:\n", i);
-    //         printf("Handle: %lu\n", state_list.entries[i].handle.handle);
-    //         printf("Type: %d\n", int(state_list.entries[i].device.deviceType));
-    //     }
-    // });
 
     // buttons
     for (int i = 0; i < 16; ++i)

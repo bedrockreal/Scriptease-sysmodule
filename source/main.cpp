@@ -13,7 +13,6 @@ extern "C" {
 #include <math.h>
 #include <errno.h>
 
-#include "misc.h"
 #include "util.h"
 #include "freeze.h"
 #include "common.h"
@@ -25,18 +24,13 @@ extern "C" {
 #define THREAD_SIZE 0x1A000
 #define VERSION_S "2.4"
 
-Thread freezeThread, touchThread;
+Thread freezeThread;
 
 // locks for thread
-Mutex freezeMutex, touchMutex;
+Mutex freezeMutex;
 
 // events for releasing or idling threads
 FreezeThreadState freeze_thr_state = Active; 
-// key and touch events currently being processed
-TouchData currentTouchEvent = {0};
-
-// for cancelling the touch/click thread
-u8 touchToken = 0;
 
 // fd counters and max size
 int fd_count = 0;
@@ -45,12 +39,14 @@ int fd_size = 5;
 // we aren't an applet
 u32 __nx_applet_type = AppletType_None;
 
-u64 freezeRate = 3;
+u64 freeze_rate = 3;
 
 struct pollfd *pfds;
 
 ViDisplay disp;
 Event vsyncEvent;
+
+Handle debughandle = 0;
 
 // we override libnx internals to do a minimal init
 void __libnx_initheap(void)
@@ -100,10 +96,6 @@ void __appExit(void)
 	    freeze_thr_state = Exit;
 		threadWaitForExit(&freezeThread);
         threadClose(&freezeThread);
-
-        currentTouchEvent.state = 3;
-        threadWaitForExit(&touchThread);
-        threadClose(&touchThread);
 	}
 	
 	clearFreezes();
@@ -120,17 +112,13 @@ void __appExit(void)
 
     fsExit();
     fsdevUnmountAll();
-    hiddbgExit();
 }
 
 void sub_freeze(void *arg);
-void sub_touch(void *arg);
 }
 
 #include "lua_wrap.hpp"
-
 std::vector<bot> bots;
-
 int main()
 {
     R_ASSERT(viOpenDefaultDisplay(&disp));
@@ -158,14 +146,12 @@ int main()
 	if (R_SUCCEEDED(rc))
         rc = threadStart(&freezeThread);
 
-    // touch thread
-    mutexInit(&touchMutex);
-    rc = threadCreate(&touchThread, sub_touch, (void*)&currentTouchEvent, NULL, THREAD_SIZE, 0x2C, -2); 
-    if (R_SUCCEEDED(rc))
-        rc = threadStart(&touchThread);
-
+    bot::init();
+    bots.reserve(8); // reallocating destroys objs
+    
     sol::state lua;
     luaInit(lua);
+    
     flashLed();
 
     while (true)
@@ -236,8 +222,6 @@ int main()
                                         // u64 end_ns = armTicksToNs(armGetSystemTick());
                                         // printf("%.6lf\n", (end_ns - start_ns) / 1e6);
 
-                                        printf("%lu\n", bots.size());
-
                                         fflush(stdout);
                                         memset(linebuf, 0, readBytesSoFar);
                                     }
@@ -260,10 +244,12 @@ int main()
             freeze_thr_state = Idle;
         mutexUnlock(&freezeMutex);
 		
-        R_ASSERT(eventWait(&vsyncEvent, 0xFFFFFFFFFFF));
+        // R_ASSERT(eventWait(&vsyncEvent, 0xFFFFFFFFFFF));
+        eventWait(&vsyncEvent, 0xFFFFFFFFFFF);
     }
 	
     bots.clear();
+    bot::exit();
     return 0;
 }
 
@@ -306,12 +292,13 @@ void sub_freeze(void *arg)
             continue;
         }
 		
+        bool isPaused = getIsPaused();
 		mutexLock(&freezeMutex);
-		attach();
+		if (!isPaused) attach();
 		heap_base = getHeapBase(debughandle);
-		pmdmntGetApplicationProcessId(&pid);
+        pid = getPID();
 		tid_now = getTitleId(pid);
-		detach();
+		if (!isPaused) detach();
 		
 		// don't freeze on startup of new tid to remove any chance of save corruption
 		if (tid_now == 0)
@@ -344,31 +331,8 @@ void sub_freeze(void *arg)
 		}
 		
 		mutexUnlock(&freezeMutex);
-		svcSleepThread(freezeRate * 1e+6L);
+		svcSleepThread(freeze_rate * 1e+6L);
 		tid_now = 0;
 		pid = 0;
 	}
-}
-
-void sub_touch(void *arg)
-{
-    while (1)
-    {
-        TouchData* touchPtr = (TouchData*)arg;
-        if (touchPtr->state == 1)
-        {
-            mutexLock(&touchMutex); // don't allow any more assignments to the touch var (will lock the main thread)
-            touchMulti(touchPtr->states, touchPtr->sequentialCount, touchPtr->holdTime, touchPtr->hold, &touchToken);
-            free(touchPtr->states);
-            touchPtr->state = 0;
-            mutexUnlock(&touchMutex);
-        }
-
-        svcSleepThread(1e+6L);
-        
-        touchToken = 0;
-
-        if (touchPtr->state == 3)
-            break;
-    }
 }

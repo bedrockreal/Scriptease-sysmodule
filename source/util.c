@@ -7,7 +7,6 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include "util.h"
-#include "misc.h"
 #include "common.h"
 
 const char* const translate_keys[16] =
@@ -176,18 +175,6 @@ void del_from_pfds(struct pollfd pfds[], int i, int *fd_count)
     (*fd_count)--;
 }
 
-void makeTouch(HidTouchState* state, u64 sequentialCount, u64 holdTime, bool hold)
-{
-    // mutexLock(&touchMutex);
-    // memset(&currentTouchEvent, 0, sizeof currentTouchEvent);
-    // currentTouchEvent.states = state;
-    // currentTouchEvent.sequentialCount = sequentialCount;
-    // currentTouchEvent.holdTime = holdTime;
-    // currentTouchEvent.hold = hold;
-    // currentTouchEvent.state = 1;
-    // mutexUnlock(&touchMutex);
-}
-
 void reverseArray(u8* arr, int start, int end)
 {
     int temp;
@@ -199,4 +186,14 @@ void reverseArray(u8* arr, int start, int end)
         start++;
         end--;
     }   
-} 
+}
+
+bool getIsProgramOpen(u64 tid)
+{
+    u64 pid = 0;    
+    Result rc = pmdmntGetProcessId(&pid, tid);
+    if (pid == 0 || R_FAILED(rc))
+        return false;
+
+    return true;
+}
